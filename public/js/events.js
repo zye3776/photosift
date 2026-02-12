@@ -1,15 +1,16 @@
 /* PhotoSift — Event Listeners */
 
-import { state, TILE_SIZE_MIN, TILE_SIZE_MAX, TILE_SIZE_STEP } from './state.js';
+import { state, TILE_SIZE_MIN, TILE_SIZE_MAX, TILE_SIZE_STEP, STORAGE_KEY } from './state.js';
 import {
-  $btnPickFolder, $folderDisplay, $toggleGroupMode,
+  $btnPickFolder, $folderDisplay, $btnScanFolder, $toggleGroupMode,
+  $groupFilter, $groupSizeFilter,
   $btnPrevGroup, $btnNextGroup,
   $btnSelectAll, $btnInvertSelection, $btnDeselectAll, $btnDelete,
   $btnUndo, $photoGrid,
 } from './dom.js';
 import { getVisiblePhotos, updateGroupNav, dismissUndo } from './ui.js';
 import { renderGrid } from './grid.js';
-import { scanFolder, deleteUnselected, undoLastDelete } from './api.js';
+import { scanFolder, applyGroupFilter, deleteUnselected, undoLastDelete } from './api.js';
 
 $btnPickFolder.addEventListener('click', async () => {
   $btnPickFolder.disabled = true;
@@ -24,10 +25,19 @@ $btnPickFolder.addEventListener('click', async () => {
     }
     $folderDisplay.textContent = data.folder;
     $folderDisplay.classList.add('active');
-    await scanFolder(data.folder);
+    state.currentFolder = data.folder;
+    localStorage.setItem(STORAGE_KEY, data.folder);
   } finally {
     $btnPickFolder.disabled = false;
     $btnPickFolder.textContent = 'Select Folder';
+  }
+});
+
+$btnScanFolder.addEventListener('click', () => {
+  if (state.currentFolder) {
+    scanFolder(state.currentFolder);
+  } else {
+    alert('Please select a folder first.');
   }
 });
 
@@ -35,6 +45,20 @@ $toggleGroupMode.addEventListener('change', () => {
   state.groupMode = $toggleGroupMode.checked;
   state.currentGroupIndex = 0;
   state.currentPage = 0;
+  
+  if (state.groupMode) {
+    $groupFilter.classList.remove('hidden');
+  } else {
+    $groupFilter.classList.add('hidden');
+  }
+
+  updateGroupNav();
+  renderGrid();
+});
+
+$groupSizeFilter.addEventListener('input', () => {
+  state.groupFilterCount = parseInt($groupSizeFilter.value) || 0;
+  applyGroupFilter();
   updateGroupNav();
   renderGrid();
 });

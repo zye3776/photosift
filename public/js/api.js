@@ -10,6 +10,14 @@ import {
 } from './ui.js';
 import { renderGrid } from './grid.js';
 
+export function applyGroupFilter() {
+  state.groupNames = state.allGroupNames.filter(name => {
+    const count = (state.groups[name] || []).length;
+    return count >= state.groupFilterCount;
+  });
+  state.currentGroupIndex = 0;
+}
+
 export async function scanFolder(folderPath, restoreGroupName) {
   showLoading('Scanning folder...');
   try {
@@ -23,12 +31,16 @@ export async function scanFolder(folderPath, restoreGroupName) {
     const data = await response.json();
     state.photos = data.photos;
     // Sort by name (natural sort)
-    state.photos.sort((a, b) => 
-      a.stem.localeCompare(b.stem, undefined, { numeric: true, sensitivity: 'base' })
-    );
+    state.photos.sort((a, b) => {
+      const s1 = a.stem || '';
+      const s2 = b.stem || '';
+      return s1.localeCompare(s2, undefined, { numeric: true, sensitivity: 'base' });
+    });
 
     state.groups = data.groups;
-    state.groupNames = Object.keys(data.groups).sort();
+    state.allGroupNames = Object.keys(data.groups).sort();
+    applyGroupFilter();
+
     state.currentFolder = folderPath;
     state.selectedKeepers.clear();
 

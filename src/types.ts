@@ -2,7 +2,7 @@ export interface PhotoPair {
   stem: string;
   jpgPath: string;
   rafPath: string | null;
-  group: string | null;
+  group: string;
 }
 
 export interface ScanResult {

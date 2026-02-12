@@ -4,25 +4,23 @@ import { join, parse, extname } from 'node:path';
 import { FolderNotFoundError, FolderReadError } from './errors';
 import type { PhotoPair, ScanResult } from './types';
 
-const GROUP_PATTERN = /^(.+)-(\d{3})$/;
+const GROUP_PATTERN = /^(.+)-(\d{2,3})$/;
 
 const JPG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 const RAW_EXTENSION = '.raf';
 
-function extractGroup(stem: string): string | null {
+function extractGroup(stem: string): string {
   const match = GROUP_PATTERN.exec(stem);
-  return match ? match[1] : null;
+  return match ? match[1] : stem;
 }
 
 function buildGroups(photos: PhotoPair[]): Record<string, PhotoPair[]> {
   const groups: Record<string, PhotoPair[]> = {};
   for (const photo of photos) {
-    if (photo.group) {
-      if (!groups[photo.group]) {
-        groups[photo.group] = [];
-      }
-      groups[photo.group].push(photo);
+    if (!groups[photo.group]) {
+      groups[photo.group] = [];
     }
+    groups[photo.group].push(photo);
   }
   return groups;
 }
@@ -46,7 +44,7 @@ export function scanFolder(
 
     const entries = yield* _(
       Effect.tryPromise({
-        try: () => readdir(folderPath),
+        try: () => readdir(folderPath, { withFileTypes: true }),
         catch: (error) => new FolderReadError(folderPath, String(error)),
       }),
     );
@@ -54,10 +52,12 @@ export function scanFolder(
     const filesByName = new Map<string, Set<string>>();
 
     for (const entry of entries) {
-      if (entry.startsWith('.')) continue;
-      const ext = extname(entry).toLowerCase();
+      if (entry.name.startsWith('.')) continue;
+      if (!entry.isFile()) continue;
+
+      const ext = extname(entry.name).toLowerCase();
       if (!JPG_EXTENSIONS.has(ext) && ext !== RAW_EXTENSION) continue;
-      const { name } = parse(entry);
+      const { name } = parse(entry.name);
       if (!filesByName.has(name)) {
         filesByName.set(name, new Set());
       }

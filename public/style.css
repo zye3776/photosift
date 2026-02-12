@@ -105,6 +105,22 @@ body {
   color: var(--text-muted);
 }
 
+#group-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+#group-filter input {
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
 /* ── Buttons ──────────────────────────────────── */
 
 button {

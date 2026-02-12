@@ -60,6 +60,7 @@ export function renderGrid() {
       tile.classList.add('selected');
     }
     tile.dataset.stem = photo.stem;
+    tile.title = photo.jpgPath + (photo.rafPath ? `\n${photo.rafPath}` : '');
 
     const img = document.createElement('img');
     img.src = `/api/thumbnail?file=${encodeURIComponent(photo.jpgPath)}`;

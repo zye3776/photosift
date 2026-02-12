@@ -63,9 +63,15 @@ export function updateGroupNav() {
     return;
   }
   $groupNav.classList.remove('hidden');
+  const total = state.groupNames.length;
+  if (total === 0) {
+    $groupInfo.textContent = `No groups with at least ${state.groupFilterCount} photos`;
+    $btnPrevGroup.disabled = true;
+    $btnNextGroup.disabled = true;
+    return;
+  }
   const groupName = state.groupNames[state.currentGroupIndex];
   const photos = state.groups[groupName] || [];
-  const total = state.groupNames.length;
   const idx = state.currentGroupIndex + 1;
   $groupInfo.textContent = `${groupName} (${photos.length} photos) \u2014 Group ${idx} of ${total}`;
   $btnPrevGroup.disabled = state.currentGroupIndex === 0;

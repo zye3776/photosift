@@ -13,6 +13,7 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 THUMBNAIL_DIR="./thumbnails"
+SELECTED_THUMB_DIR="./thumbnails/selected"
 CORRECTED_DIR="./corrected"
 BACKUP_DIR="./backup"
 LOG_FILE="./set-thumbnail.log"
@@ -67,6 +68,37 @@ format_bytes() {
     fi
 }
 
+# --- Generate Contact Sheet --------------------------------------------------
+create_contact_sheet() {
+    local name="$1"
+    local thumbnail_000="$THUMBNAIL_DIR/$name-000.jpg"
+    
+    # Skip if contact sheet already exists
+    if [[ -f "$thumbnail_000" ]]; then
+        return 0
+    fi
+
+    # Use bash glob instead of ls for faster counting
+    local thumbs=("$THUMBNAIL_DIR/$name"-[0-9][0-9].*)
+    if [[ ! -e "${thumbs[0]}" ]]; then
+        return 0
+    fi
+    local count=${#thumbs[@]}
+
+    # Optimization: Use -define jpeg:size=400x400 to speed up JPEG reading
+    # and use -strip to remove metadata from the final thumbnail.
+    case $count in
+        '6' | '5' | '4')
+            log_info "      ${DIM}Creating 2x contact sheet ($count tiles)...${NC}"
+            montage -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$thumbnail_000" >/dev/null 2>&1 || true
+            ;;
+        '3' | '2')
+            log_info "      ${DIM}Creating 1x contact sheet ($count tiles)...${NC}"
+            montage -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$thumbnail_000" >/dev/null 2>&1 || true
+            ;;
+    esac
+}
+
 # --- Process a Single Video --------------------------------------------------
 process_video() {
     local video="$1"
@@ -91,12 +123,13 @@ process_video() {
         return
     fi
 
-    # Find thumbnail
-    # Logic: ls ./thumbnails/$name-[0-9][0-9]*.??? | sort -V | head -n 1
+    # 1. Generate contact sheet first if needed
+    create_contact_sheet "$name"
+
+    # 2. Find thumbnail (will pick -000.jpg if created above)
     local thumb_pattern="$THUMBNAIL_DIR/$name-[0-9][0-9]*.???"
     local thumbnail_to_use=""
     
-    # Use find/sort to safely locate the file or handle no match
     thumbnail_to_use=$(ls $thumb_pattern 2>/dev/null | sort -V | head -n 1 || true)
 
     if [[ -z "$thumbnail_to_use" || ! -f "$thumbnail_to_use" ]]; then
@@ -112,9 +145,6 @@ process_video() {
     start_time=$(date +%s)
     
     # Run ffmpeg
-    # Original command:
-    # ffmpeg -y -i "$name.mp4" -i $thumbnailToUse -vcodec libx265 -map 0 -map 1 -c copy -c:v:1 png -disposition:v:1 attached_pic $outputFilePathAndName
-    
     local error_log
     error_log=$(mktemp)
     
@@ -145,8 +175,9 @@ process_video() {
     log_ok "      ${DIM}└─ ${GREEN}Success${NC}${DIM} in ${duration}s → $(format_bytes "$filesize")${NC}"
     log_to_file "OK $name.mp4 in ${duration}s"
 
-    # Cleanup actions from original script
-    rm -f "$thumbnail_to_use"
+    # Save the thumbnail in a dedicated folder instead of deleting it
+    mkdir -p "$SELECTED_THUMB_DIR"
+    mv "$thumbnail_to_use" "$SELECTED_THUMB_DIR/"
     mv "$video" "$BACKUP_DIR/"
 }
 
@@ -162,6 +193,7 @@ main() {
     mkdir -p "$CORRECTED_DIR"
     mkdir -p "$BACKUP_DIR"
     mkdir -p "$THUMBNAIL_DIR"
+    mkdir -p "$SELECTED_THUMB_DIR"
     
     # Initialize log
     : >> "$LOG_FILE"
@@ -173,13 +205,6 @@ main() {
         exit 1
     fi
 
-    # Run contact-sheet script first (as per original logic)
-    if [[ -f "./contact-sheet.sh" ]]; then
-        log_info "Running contact-sheet.sh..."
-        sh ./contact-sheet.sh
-    else
-        log_warn "contact-sheet.sh not found, skipping..."
-    fi
 
     # Find videos
     local videos=()

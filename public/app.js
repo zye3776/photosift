@@ -12,5 +12,5 @@ const lastFolder = localStorage.getItem(STORAGE_KEY);
 if (lastFolder) {
   $folderDisplay.textContent = lastFolder;
   $folderDisplay.classList.add('active');
-  scanFolder(lastFolder);
+  state.currentFolder = lastFolder;
 }

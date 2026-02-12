@@ -2,8 +2,11 @@
 
 export const $btnPickFolder = document.getElementById('btn-pick-folder');
 export const $folderDisplay = document.getElementById('folder-display');
+export const $btnScanFolder = document.getElementById('btn-scan-folder');
 export const $modeControls = document.getElementById('mode-controls');
 export const $toggleGroupMode = document.getElementById('toggle-group-mode');
+export const $groupFilter = document.getElementById('group-filter');
+export const $groupSizeFilter = document.getElementById('group-size-filter');
 export const $photoCount = document.getElementById('photo-count');
 export const $groupNav = document.getElementById('group-nav');
 export const $btnPrevGroup = document.getElementById('btn-prev-group');

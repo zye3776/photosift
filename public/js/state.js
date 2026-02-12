@@ -20,4 +20,6 @@ export const state = {
   lastDeletedFiles: [],
   lastDeletedGroup: null,
   undoTimeout: null,
+  groupFilterCount: 6,
+  allGroupNames: [],
 };

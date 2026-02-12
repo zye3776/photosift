@@ -13,12 +13,17 @@
       <div id="folder-input-group">
         <button id="btn-pick-folder">Select Folder</button>
         <span id="folder-display" class="folder-display">No folder selected</span>
+        <button id="btn-scan-folder" class="secondary">Scan</button>
       </div>
       <div id="mode-controls" class="hidden">
         <label class="toggle-label">
           <input type="checkbox" id="toggle-group-mode">
           <span>Group Mode</span>
         </label>
+        <div id="group-filter" class="hidden">
+          <label>Min photos in group:</label>
+          <input type="number" id="group-size-filter" value="6" min="1" style="width: 50px;">
+        </div>
         <span id="photo-count"></span>
       </div>
     </div>

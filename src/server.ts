@@ -7,7 +7,7 @@ import { deleteFiles, restoreFiles, restoreGroup } from './trash';
 import { pickFolder } from './folder-picker';
 import type { DeleteRequest } from './types';
 
-const PORT = 3000;
+const PORT = parseInt(Bun.env.PORT || '3000');
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
 
 function serveStatic(filePath: string): Response {
