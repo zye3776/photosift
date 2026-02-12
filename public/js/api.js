@@ -3,8 +3,6 @@
 import { state, STORAGE_KEY } from './state.js';
 import {
   $modeControls, $photoCount,
-  $confirmMessage, $confirmDialog,
-  $btnConfirmCancel, $btnConfirmDelete,
 } from './dom.js';
 import {
   showLoading, hideLoading, showUndoToast, dismissUndo,
@@ -76,77 +74,58 @@ export async function deleteUnselected() {
   }
 
   const count = toDelete.length;
-  const fileCount = filesToDelete.length;
-  $confirmMessage.textContent = `This will move ${count} photo(s) (${fileCount} files including RAW) to _deleted subfolder.`;
-  $confirmDialog.classList.remove('hidden');
+  // Remember current group name before re-scan
+  const currentGroupName = state.groupMode
+    ? state.groupNames[state.currentGroupIndex]
+    : null;
 
-  return new Promise((resolve) => {
-    const onCancel = () => {
-      $confirmDialog.classList.add('hidden');
-      $btnConfirmCancel.removeEventListener('click', onCancel);
-      $btnConfirmDelete.removeEventListener('click', onConfirm);
-      resolve(false);
-    };
+  showLoading('Moving files to _deleted...');
+  try {
+    const response = await fetch('/api/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: filesToDelete }),
+    });
+    const result = await response.json();
 
-    const onConfirm = async () => {
-      $confirmDialog.classList.add('hidden');
-      $btnConfirmCancel.removeEventListener('click', onCancel);
-      $btnConfirmDelete.removeEventListener('click', onConfirm);
+    if (result.failed && result.failed.length > 0) {
+      const msgs = result.failed.map((f) => `${f.path}: ${f.reason}`);
+      alert(`Some files failed to delete:\n${msgs.join('\n')}`);
+    }
 
-      // Remember current group name before re-scan
-      const currentGroupName = state.groupMode
-        ? state.groupNames[state.currentGroupIndex]
-        : null;
+    // Store deleted files for undo
+    state.lastDeletedFiles = result.deleted || [];
+    state.lastDeletedGroup = currentGroupName;
 
-      showLoading('Moving files to _deleted...');
-      try {
-        const response = await fetch('/api/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: filesToDelete }),
-        });
-        const result = await response.json();
+    // Re-scan but stay on the same group (or closest valid)
+    await scanFolder(state.currentFolder, currentGroupName);
 
-        if (result.failed && result.failed.length > 0) {
-          const msgs = result.failed.map((f) => `${f.path}: ${f.reason}`);
-          alert(`Some files failed to delete:\n${msgs.join('\n')}`);
-        }
-
-        // Store deleted files for undo
-        state.lastDeletedFiles = result.deleted || [];
-        state.lastDeletedGroup = currentGroupName;
-
-        // Re-scan but stay on the same group (or closest valid)
-        await scanFolder(state.currentFolder, currentGroupName);
-
-        // Show undo toast
-        if (state.lastDeletedFiles.length > 0) {
-          showUndoToast(count);
-        }
-
-        resolve(true);
-      } finally {
-        hideLoading();
-      }
-    };
-
-    $btnConfirmCancel.addEventListener('click', onCancel);
-    $btnConfirmDelete.addEventListener('click', onConfirm);
-  });
+    // Show undo toast
+    if (state.lastDeletedFiles.length > 0) {
+      showUndoToast(count);
+    }
+  } finally {
+    hideLoading();
+  }
 }
 
 export async function undoLastDelete() {
   if (state.lastDeletedFiles.length === 0) return;
 
+  const filesToRestore = [...state.lastDeletedFiles];
   const targetGroup = state.lastDeletedGroup;
 
   dismissUndo();
+  // Clear state immediately to prevent double-click issues
+  state.lastDeletedFiles = [];
+  state.lastDeletedGroup = null;
+
   showLoading('Restoring files...');
   try {
     const response = await fetch('/api/restore', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: state.lastDeletedFiles }),
+      body: JSON.stringify({ files: filesToRestore }),
     });
     const result = await response.json();
 
@@ -155,8 +134,6 @@ export async function undoLastDelete() {
       alert(`Some files failed to restore:\n${msgs.join('\n')}`);
     }
 
-    state.lastDeletedFiles = [];
-    state.lastDeletedGroup = null;
     await scanFolder(state.currentFolder, targetGroup || state.groupNames[state.currentGroupIndex]);
   } finally {
     hideLoading();

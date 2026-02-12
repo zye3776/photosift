@@ -33,7 +33,6 @@ export function dismissUndo() {
     clearTimeout(state.undoTimeout);
     state.undoTimeout = null;
   }
-  state.lastDeletedFiles = [];
 }
 
 export function getVisiblePhotos() {

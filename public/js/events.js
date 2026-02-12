@@ -3,7 +3,7 @@
 import { state, TILE_SIZE_MIN, TILE_SIZE_MAX, TILE_SIZE_STEP } from './state.js';
 import {
   $btnPickFolder, $folderDisplay, $toggleGroupMode,
-  $btnPrevGroup, $btnNextGroup, $btnSkipGroup,
+  $btnPrevGroup, $btnNextGroup,
   $btnSelectAll, $btnInvertSelection, $btnDeselectAll, $btnDelete,
   $btnUndo, $photoGrid,
 } from './dom.js';
@@ -57,19 +57,6 @@ $btnNextGroup.addEventListener('click', () => {
   }
 });
 
-$btnSkipGroup.addEventListener('click', () => {
-  const groupName = state.groupNames[state.currentGroupIndex];
-  const photos = state.groups[groupName] || [];
-  for (const photo of photos) {
-    state.selectedKeepers.add(photo.stem);
-  }
-  if (state.currentGroupIndex < state.groupNames.length - 1) {
-    state.currentGroupIndex++;
-    state.currentPage = 0;
-    updateGroupNav();
-  }
-  renderGrid();
-});
 
 $btnSelectAll.addEventListener('click', () => {
   const visible = getVisiblePhotos();
