@@ -173,7 +173,7 @@ generate_thumb() {
     # Skip if thumbnails already exist
     if compgen -G "$THUMBNAIL_DIR/$name-"*.jpg > /dev/null 2>&1; then
         local existing
-        existing=$(find "$THUMBNAIL_DIR" -name "$name-*.jpg" 2>/dev/null | wc -l | tr -d ' ')
+        existing=$(find "$THUMBNAIL_DIR" -name "$name-*.jpg" -not -name "._*" 2>/dev/null | wc -l | tr -d ' ')
         log_skip "$prefix ${DIM}$name.mp4${NC} — $existing thumbnails already exist"
         log_to_file "SKIP $name.mp4 ($existing thumbnails exist)"
         return
@@ -367,8 +367,8 @@ generate_thumb() {
 
     # Calculate total output size for this video
     local out_size
-    out_size=$(find "$THUMBNAIL_DIR" -name "$name-*.jpg" -exec stat -f%z {} + 2>/dev/null \
-            || find "$THUMBNAIL_DIR" -name "$name-*.jpg" -exec stat -c%s {} + 2>/dev/null \
+    out_size=$(find "$THUMBNAIL_DIR" -name "$name-*.jpg" -not -name "._*" -exec stat -f%z {} + 2>/dev/null \
+            || find "$THUMBNAIL_DIR" -name "$name-*.jpg" -not -name "._*" -exec stat -c%s {} + 2>/dev/null \
             || echo "0")
     local total_out=0
     for s in $out_size; do total_out=$((total_out + s)); done
@@ -489,10 +489,10 @@ main() {
 
     # Final stats
     local total_thumbs
-    total_thumbs=$(find "$THUMBNAIL_DIR" -name "*.jpg" 2>/dev/null | wc -l | tr -d ' ')
+    total_thumbs=$(find "$THUMBNAIL_DIR" -name "*.jpg" -not -name "._*" 2>/dev/null | wc -l | tr -d ' ')
     local total_out_size
-    total_out_size=$(find "$THUMBNAIL_DIR" -name "*.jpg" -exec stat -f%z {} + 2>/dev/null \
-                  || find "$THUMBNAIL_DIR" -name "*.jpg" -exec stat -c%s {} + 2>/dev/null \
+    total_out_size=$(find "$THUMBNAIL_DIR" -name "*.jpg" -not -name "._*" -exec stat -f%z {} + 2>/dev/null \
+                  || find "$THUMBNAIL_DIR" -name "*.jpg" -not -name "._*" -exec stat -c%s {} + 2>/dev/null \
                   || echo "0")
     local total_out_bytes=0
     for s in $total_out_size; do total_out_bytes=$((total_out_bytes + s)); done

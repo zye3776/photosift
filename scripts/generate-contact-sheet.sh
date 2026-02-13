@@ -50,11 +50,13 @@ process_group() {
         return 0
     fi
     local count=${#thumbs[@]}
+    if (( count > 6 )); then
+        log_skip "$prefix ${DIM}$name${NC} — ignored ($count thumbnails)"
+        return 0
+    fi
 
-    # Skip if contact sheet already exists and we have same number of thumbs (optional check)
+    # Skip if contact sheet already exists
     if [[ -f "$contact_sheet" ]]; then
-        # We could add more logic here to see if it needs update, 
-        # but for now, simple skip is consistent with "keep work from previous run"
         log_skip "$prefix ${DIM}$name${NC} — contact sheet already exists"
         return 0
     fi
@@ -98,13 +100,7 @@ process_group() {
             fi
             ;;
         *)
-            if (( count > 6 )); then
-                log_warn "      ${DIM}├─ ⚠ Too many thumbnails ($count). Using first 6...${NC}"
-                local limited_thumbs=("${thumbs[@]:0:6}")
-                if [ "$has_im" = true ]; then
-                    $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${limited_thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
-                fi
-            fi
+            log_warn "      ${DIM}├─ ⚠ Unexpected thumbnail count: $count${NC}"
             ;;
     esac
     
@@ -144,7 +140,7 @@ main() {
         local n
         n=$(echo "$f" | sed -E 's/-[0-9]+\.[a-zA-Z0-9]+$//')
         names+=("$n")
-    done < <(find "$THUMBNAIL_DIR" -maxdepth 1 -name "*-[0-9]*.*" -exec basename {} \; | sort -u)
+    done < <(find "$THUMBNAIL_DIR" -maxdepth 1 -name "*-[0-9]*.*" -not -name "._*" -exec basename {} \; | sort -u)
 
     local total=${#names[@]}
 
