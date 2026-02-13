@@ -22,18 +22,27 @@ Follow these steps in order to process your videos effectively:
     5. Delete the unselected thumbnails. 
 - **Result:** Only your favorite frames remain in the `./thumbnails` folder.
 
-### 3. Embed Thumbnails
-**Script:** `set-thumbnail.sh`
-- **When to use:** Once you have selected the best thumbnails.
+### 3. Generate Contact Sheets
+**Script:** `generate-contact-sheet.sh`
+- **When to use:** After you have selected your favorite thumbnails in the `thumbnails/` folder.
 - **What it does:** 
-    - **Automatically generates a contact sheet/collage** if you kept multiple frames (2-6) for a single video.
-    - Embeds the best frame (or the generated collage) into the MP4 file as cover art.
+    - Groups thumbnails by video name.
+    - If a video has multiple thumbnails (2-6), it generates a collage.
+    - If only one is kept, it copies it as the final version.
+    - Stores the final cover images in `./thumbnails/contact-sheets/`.
+- **Command:** `./generate-contact-sheet.sh`
+
+### 4. Embed Thumbnails
+**Script:** `set-thumbnail.sh`
+- **When to use:** Once your final cover images are ready in the `contact-sheets/` folder.
+- **What it does:** 
+    - Embeds the cover image from `thumbnails/contact-sheets/` into the correspondng MP4 file.
     - Moves the "corrected" videos (with thumbnails) to the `./corrected` folder.
     - Moves the original videos to the `./backup` folder.
-    - **Saves the selected thumbnail** in `./thumbnails/selected/` for your records.
+    - **Saves the used cover** in `./thumbnails/selected/` for your records.
 - **Command:** `./set-thumbnail.sh`
 
-### 4. Final Cleanup
+### 5. Final Cleanup
 **Script:** `remove-corrected.sh`
 - **When to use:** After you have verified your links in the `./corrected` folder.
 - **What it does:** Moves any original videos that have been successfully processed and moved to `./corrected` into a `./removed` folder for safe deletion.
@@ -47,4 +56,4 @@ Ensure you have the following installed on your system:
 
 ## 💡 Pro Tips
 - Most scripts support a `--video-max N` flag (e.g., `./generate-thumbnail.sh --video-max 5`) to test the process on a small batch first.
-- Always check the `generate.log` or `set-thumbnail.log` if a script fails.
+- Always check the `.log` files if a script fails.

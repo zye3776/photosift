@@ -13,6 +13,7 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 THUMBNAIL_DIR="./thumbnails"
+CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
 SELECTED_THUMB_DIR="./thumbnails/selected"
 CORRECTED_DIR="./corrected"
 BACKUP_DIR="./backup"
@@ -68,60 +69,6 @@ format_bytes() {
     fi
 }
 
-# --- Generate Contact Sheet --------------------------------------------------
-create_contact_sheet() {
-    local name="$1"
-    local thumbnail_000="$THUMBNAIL_DIR/$name-000.jpg"
-    
-    # Skip if contact sheet already exists
-    if [[ -f "$thumbnail_000" ]]; then
-        return 0
-    fi
-
-    # Use bash glob to find thumbnails (supports 2 or 3 digits)
-    local thumbs=("$THUMBNAIL_DIR/$name"-[0-9]*.???)
-    if [[ ! -e "${thumbs[0]}" ]]; then
-        return 0
-    fi
-    local count=${#thumbs[@]}
-
-    # Determine command (ImageMagick v7 uses 'magick montage')
-    local cmd="montage"
-    local has_im=true
-    if ! command -v montage &> /dev/null; then
-        if command -v magick &> /dev/null; then
-            cmd="magick montage"
-        else
-            has_im=false
-        fi
-    fi
-
-    # Optimization: Use -define jpeg:size=400x400 to speed up JPEG reading
-    # and use -strip to remove metadata from the final thumbnail.
-    case $count in
-        '6' | '5' | '4')
-            if [ "$has_im" = true ]; then
-                log_info "      ${DIM}├─ 🎨 Generating grid collage ($count tiles)...${NC}"
-                $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$thumbnail_000" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
-            else
-                log_warn "      ${DIM}├─ ⚠ Skip grid: ImageMagick missing${NC}"
-            fi
-            ;;
-        '3' | '2')
-            if [ "$has_im" = true ]; then
-                log_info "      ${DIM}├─ 🎨 Generating vertical stack ($count tiles)...${NC}"
-                $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$thumbnail_000" || log_err "      ${DIM}├─ ✗ Stack generation failed${NC}"
-            else
-                # Fallback to ffmpeg for vertical stacking (very fast)
-                log_info "      ${DIM}├─ ⚡ Generating stack ($count tiles) via FFmpeg...${NC}"
-                local inputs=""
-                for t in "${thumbs[@]}"; do inputs="$inputs -i $t"; done
-                ffmpeg -y -hide_banner -loglevel error $inputs -filter_complex "vstack=inputs=$count" "$thumbnail_000" || log_err "      ${DIM}├─ ✗ FFmpeg stack failed${NC}"
-            fi
-            ;;
-    esac
-}
-
 # --- Process a Single Video --------------------------------------------------
 process_video() {
     local video="$1"
@@ -149,18 +96,12 @@ process_video() {
     # Log start of processing
     log_info "$prefix ${BOLD}$name.mp4${NC}"
 
-    # 1. Generate contact sheet first if needed
-    create_contact_sheet "$name"
+    # 1. Find pre-generated contact sheet
+    local thumbnail_to_use="$CONTACT_SHEET_DIR/$name.jpg"
 
-    # 2. Find thumbnail (will pick -000.jpg if created above)
-    local thumb_pattern="$THUMBNAIL_DIR/$name-[0-9]*.???"
-    local thumbnail_to_use=""
-    
-    thumbnail_to_use=$(ls $thumb_pattern 2>/dev/null | sort -V | head -n 1 || true)
-
-    if [[ -z "$thumbnail_to_use" || ! -f "$thumbnail_to_use" ]]; then
-        log_warn "      ${DIM}├─ ⚠ No thumbnails found, skipping${NC}"
-        log_to_file "WARN $name.mp4 (no thumbnails found)"
+    if [[ ! -f "$thumbnail_to_use" ]]; then
+        log_warn "      ${DIM}├─ ⚠ No contact sheet found in $CONTACT_SHEET_DIR, skipping${NC}"
+        log_to_file "WARN $name.mp4 (no contact sheet found)"
         return
     fi
 
@@ -230,10 +171,6 @@ main() {
         exit 1
     fi
 
-    if ! command -v montage &> /dev/null && ! command -v magick &> /dev/null; then
-        log_warn "ImageMagick (montage) not found. Contact sheets will NOT be generated."
-        log_warn "Install it with: brew install imagemagick"
-    fi
 
 
     # Find videos
