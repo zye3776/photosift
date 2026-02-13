@@ -78,23 +78,46 @@ create_contact_sheet() {
         return 0
     fi
 
-    # Use bash glob instead of ls for faster counting
-    local thumbs=("$THUMBNAIL_DIR/$name"-[0-9][0-9].*)
+    # Use bash glob to find thumbnails (supports 2 or 3 digits)
+    local thumbs=("$THUMBNAIL_DIR/$name"-[0-9]*.???)
     if [[ ! -e "${thumbs[0]}" ]]; then
         return 0
     fi
     local count=${#thumbs[@]}
 
+    # Determine command (ImageMagick v7 uses 'magick montage')
+    local cmd="montage"
+    local has_im=true
+    if ! command -v montage &> /dev/null; then
+        if command -v magick &> /dev/null; then
+            cmd="magick montage"
+        else
+            has_im=false
+        fi
+    fi
+
     # Optimization: Use -define jpeg:size=400x400 to speed up JPEG reading
     # and use -strip to remove metadata from the final thumbnail.
     case $count in
         '6' | '5' | '4')
-            log_info "      ${DIM}Creating 2x contact sheet ($count tiles)...${NC}"
-            montage -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$thumbnail_000" >/dev/null 2>&1 || true
+            if [ "$has_im" = true ]; then
+                log_info "      ${DIM}├─ 🎨 Generating grid collage ($count tiles)...${NC}"
+                $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$thumbnail_000" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
+            else
+                log_warn "      ${DIM}├─ ⚠ Skip grid: ImageMagick missing${NC}"
+            fi
             ;;
         '3' | '2')
-            log_info "      ${DIM}Creating 1x contact sheet ($count tiles)...${NC}"
-            montage -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$thumbnail_000" >/dev/null 2>&1 || true
+            if [ "$has_im" = true ]; then
+                log_info "      ${DIM}├─ 🎨 Generating vertical stack ($count tiles)...${NC}"
+                $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$thumbnail_000" || log_err "      ${DIM}├─ ✗ Stack generation failed${NC}"
+            else
+                # Fallback to ffmpeg for vertical stacking (very fast)
+                log_info "      ${DIM}├─ ⚡ Generating stack ($count tiles) via FFmpeg...${NC}"
+                local inputs=""
+                for t in "${thumbs[@]}"; do inputs="$inputs -i $t"; done
+                ffmpeg -y -hide_banner -loglevel error $inputs -filter_complex "vstack=inputs=$count" "$thumbnail_000" || log_err "      ${DIM}├─ ✗ FFmpeg stack failed${NC}"
+            fi
             ;;
     esac
 }
@@ -123,23 +146,25 @@ process_video() {
         return
     fi
 
+    # Log start of processing
+    log_info "$prefix ${BOLD}$name.mp4${NC}"
+
     # 1. Generate contact sheet first if needed
     create_contact_sheet "$name"
 
     # 2. Find thumbnail (will pick -000.jpg if created above)
-    local thumb_pattern="$THUMBNAIL_DIR/$name-[0-9][0-9]*.???"
+    local thumb_pattern="$THUMBNAIL_DIR/$name-[0-9]*.???"
     local thumbnail_to_use=""
     
     thumbnail_to_use=$(ls $thumb_pattern 2>/dev/null | sort -V | head -n 1 || true)
 
     if [[ -z "$thumbnail_to_use" || ! -f "$thumbnail_to_use" ]]; then
-        log_warn "$prefix ${YELLOW}$name.mp4${NC} — no matching thumbnails found"
+        log_warn "      ${DIM}├─ ⚠ No thumbnails found, skipping${NC}"
         log_to_file "WARN $name.mp4 (no thumbnails found)"
         return
     fi
 
-    log_info "$prefix ${BOLD}$name.mp4${NC}"
-    log_info "      ${DIM}├─ Thumbnail: $(basename "$thumbnail_to_use")${NC}"
+    log_info "      ${DIM}├─ 🖼  Using cover: $(basename "$thumbnail_to_use")${NC}"
 
     local start_time
     start_time=$(date +%s)
@@ -203,6 +228,11 @@ main() {
     if ! command -v ffmpeg &> /dev/null; then
         log_err "ffmpeg not found. Please install it."
         exit 1
+    fi
+
+    if ! command -v montage &> /dev/null && ! command -v magick &> /dev/null; then
+        log_warn "ImageMagick (montage) not found. Contact sheets will NOT be generated."
+        log_warn "Install it with: brew install imagemagick"
     fi
 
 
