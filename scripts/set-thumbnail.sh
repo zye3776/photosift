@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
 # set-thumbnail.sh — Embeds thumbnails into MP4 video files
-# Sets the cover art (thumbnail) for MP4 files using FFmpeg.
+# Sets the cover art (thumbnail) for MP4 files using AtomicParsley.
+# Modifies metadata in-place (only the covr atom), no re-muxing.
 # Displays a mapping of videos to contact sheets before processing,
 # and offers to clean up orphaned contact sheets.
 #
@@ -15,10 +16,9 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 THUMBNAIL_DIR="./thumbnails"
 CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
-CORRECTED_DIR="./corrected"
+BACKUP_DIR="./backup"
 LOG_FILE="./set-thumbnail.log"
 VIDEO_MAX=1000              # Default limit from original script (0 = all)
-PARALLEL_JOBS=4             # Process multiple videos in parallel
 
 # --- Colors & Formatting ----------------------------------------------------
 RED='\033[0;31m'
@@ -103,7 +103,7 @@ display_mapping() {
             display_name="${display_name:0:31}..."
         fi
 
-        if [[ -f "$CORRECTED_DIR/$stem.mp4" ]]; then
+        if [[ -f "$BACKUP_DIR/$stem.mp4" ]]; then
             printf "  ${DIM}%-34s  done${NC}\n" "$display_name"
             ((done++)) || true
         elif [[ -f "./$stem.mp4" ]]; then
@@ -157,6 +157,8 @@ handle_orphaned_sheets() {
 }
 
 # --- Process a Single Video --------------------------------------------------
+PROCESSED_VIDEOS=()
+
 process_video() {
     local video="$1"
     local video_index="$2"
@@ -164,21 +166,19 @@ process_video() {
 
     local name="${video##*/}"
     name="${name%.mp4}"
-    local output_file="$CORRECTED_DIR/$name.mp4"
     local prefix="${DIM}[${video_index}/${video_total}]${NC}"
 
-    # Check if already processed
-    if [[ -f "$output_file" ]]; then
-        log_skip "$prefix ${DIM}$name.mp4${NC} — already exists in $CORRECTED_DIR"
-        log_to_file "SKIP $name.mp4 (already exists in corrected)"
-
+    # Check if already processed and backed up
+    if [[ -f "$BACKUP_DIR/$name.mp4" ]]; then
+        log_skip "$prefix ${DIM}$name.mp4${NC} — already in $BACKUP_DIR"
+        log_to_file "SKIP $name.mp4 (already in backup)"
         return
     fi
 
     # Log start of processing
     log_info "$prefix ${BOLD}$name.mp4${NC}"
 
-    # 1. Find pre-generated contact sheet
+    # Find pre-generated contact sheet
     local thumbnail_to_use="$CONTACT_SHEET_DIR/$name.jpg"
 
     if [[ ! -f "$thumbnail_to_use" ]]; then
@@ -191,23 +191,15 @@ process_video() {
 
     local start_time
     start_time=$(date +%s)
-    
-    # Run ffmpeg
+
+    # Run AtomicParsley to embed artwork in-place
     local error_log
     error_log=$(mktemp)
-    
-    if ! ffmpeg -y -hide_banner -loglevel error \
-         -i "$video" \
-         -i "$thumbnail_to_use" \
-         -map 0 -map 1 \
-         -c copy \
-         -c:v:1 copy \
-         -disposition:v:1 attached_pic \
-         "$output_file" 2>"$error_log"; then
-        
+
+    if ! AtomicParsley "$video" --artwork "$thumbnail_to_use" --overWrite 2>"$error_log"; then
         log_err "$prefix ${RED}Failed to set thumbnail for $name.mp4${NC}"
         cat "$error_log" >&2
-        log_to_file "ERROR $name.mp4 (ffmpeg failed)"
+        log_to_file "ERROR $name.mp4 (AtomicParsley failed)"
         rm -f "$error_log"
         return 1
     fi
@@ -216,13 +208,40 @@ process_video() {
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
-    
+
     local filesize
-    filesize=$(stat -f%z "$output_file" 2>/dev/null || stat -c%s "$output_file" 2>/dev/null || echo "0")
-    
+    filesize=$(stat -f%z "$video" 2>/dev/null || stat -c%s "$video" 2>/dev/null || echo "0")
+
     log_ok "      ${DIM}└─ ${GREEN}Success${NC}${DIM} in ${duration}s → $(format_bytes "$filesize")${NC}"
     log_to_file "OK $name.mp4 in ${duration}s"
 
+    PROCESSED_VIDEOS+=("$video")
+}
+
+# --- Backup Processed Videos ------------------------------------------------
+backup_processed_videos() {
+    if ((${#PROCESSED_VIDEOS[@]} == 0)); then
+        return
+    fi
+
+    echo ""
+    printf "  Move %d processed video(s) to $BACKUP_DIR/? [y/N]: " "${#PROCESSED_VIDEOS[@]}"
+    read -r answer
+    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        log_info "Skipping backup."
+        return
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+    local moved=0
+    for video in "${PROCESSED_VIDEOS[@]}"; do
+        local name="${video##*/}"
+        mv "$video" "$BACKUP_DIR/$name"
+        log_ok "Moved $name → $BACKUP_DIR/"
+        log_to_file "BACKUP $name → $BACKUP_DIR/"
+        ((moved++)) || true
+    done
+    log_ok "Backed up ${BOLD}$moved${NC} video(s)."
 }
 
 # --- Main --------------------------------------------------------------------
@@ -234,23 +253,30 @@ main() {
     echo ""
 
     # Ensure directories exist
-    mkdir -p "$CORRECTED_DIR"
     mkdir -p "$THUMBNAIL_DIR"
-    
+
     # Initialize log
     : >> "$LOG_FILE"
     log_to_file "--- session start ---"
 
-    # Check dependencies
-    if ! command -v ffmpeg &> /dev/null; then
-        log_err "ffmpeg not found. Please install it."
-        exit 1
+    # Check dependencies — auto-install AtomicParsley via Homebrew
+    if ! command -v AtomicParsley &> /dev/null; then
+        log_warn "AtomicParsley not found. Installing via Homebrew..."
+        if ! command -v brew &> /dev/null; then
+            log_err "Homebrew not found. Install AtomicParsley manually."
+            exit 1
+        fi
+        if ! brew install atomicparsley; then
+            log_err "Failed to install AtomicParsley."
+            exit 1
+        fi
+        log_ok "AtomicParsley installed."
     fi
 
     echo ""
     log_info "Configuration"
     log_info "  ${DIM}├─ Sheets dir:      ${NC}$CONTACT_SHEET_DIR"
-    log_info "  ${DIM}└─ Output dir:      ${NC}$CORRECTED_DIR"
+    log_info "  ${DIM}└─ Backup dir:      ${NC}$BACKUP_DIR"
     echo ""
 
     display_mapping
@@ -265,40 +291,24 @@ main() {
     fi
 
     local start_total=$(date +%s)
-    local results_dir
-    results_dir=$(mktemp -d)
+    local processed=0 failed=0
 
-    log_info "Processing $ready_total videos with $PARALLEL_JOBS parallel jobs..."
+    log_info "Processing $ready_total videos..."
 
     for i in "${!READY_VIDEOS[@]}"; do
         local idx=$((i + 1))
-
-        # Run in background
-        (
-            if process_video "${READY_VIDEOS[$i]}" "$idx" "$ready_total"; then
-                touch "$results_dir/done_$idx"
-            else
-                touch "$results_dir/fail_$idx"
-            fi
-        ) &
-
-        # Batch control: wait if we reached PARALLEL_JOBS
-        if (( (i + 1) % PARALLEL_JOBS == 0 )); then
-            wait
+        if process_video "${READY_VIDEOS[$i]}" "$idx" "$ready_total"; then
+            ((processed++)) || true
+        else
+            ((failed++)) || true
         fi
     done
-    wait # Wait for the last batch
-
-    # Count results using bash globbing instead of find|wc|xargs
-    local processed=0 failed=0
-    local done_files=("$results_dir"/done_*)
-    [[ -e "${done_files[0]}" ]] && processed=${#done_files[@]}
-    local fail_files=("$results_dir"/fail_*)
-    [[ -e "${fail_files[0]}" ]] && failed=${#fail_files[@]}
-    rm -rf "$results_dir"
 
     local end_total=$(($(date +%s)))
     local elapsed=$((end_total - start_total))
+
+    # Backup prompt
+    backup_processed_videos
 
     # Summary
     echo ""
@@ -310,10 +320,11 @@ main() {
     if ((failed > 0)); then
         log_err "Failed:            ${RED}$failed${NC}"
     fi
+    log_ok "Backed up:         ${BOLD}${#PROCESSED_VIDEOS[@]}${NC} video(s)"
     log_ok "Total time:        ${BOLD}$(format_duration $elapsed)${NC}"
     log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
     echo ""
-    
+
     log_to_file "=== COMPLETE: $processed videos in ${elapsed}s ==="
 }
 
