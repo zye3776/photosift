@@ -2,7 +2,8 @@
 # ============================================================================
 # set-thumbnail.sh — Embeds thumbnails into MP4 video files
 # Sets the cover art (thumbnail) for MP4 files using FFmpeg.
-# Moves processed files to ./corrected and originals to ./backup.
+# Displays a mapping of videos to contact sheets before processing,
+# and offers to clean up orphaned contact sheets.
 #
 # Usage:
 #   ./set-thumbnail.sh                 # Process up to 1000 videos
@@ -14,9 +15,7 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 THUMBNAIL_DIR="./thumbnails"
 CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
-SELECTED_THUMB_DIR="./thumbnails/selected"
 CORRECTED_DIR="./corrected"
-BACKUP_DIR="./backup"
 LOG_FILE="./set-thumbnail.log"
 VIDEO_MAX=1000              # Default limit from original script (0 = all)
 PARALLEL_JOBS=4             # Process multiple videos in parallel
@@ -26,7 +25,6 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-CYAN='\033[0;36m'
 BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
@@ -59,14 +57,135 @@ format_duration() {
 format_bytes() {
     local bytes=$1
     if ((bytes >= 1073741824)); then
-        printf '%.1f GB' "$(echo "$bytes / 1073741824" | bc -l)"
+        awk "BEGIN {printf \"%.1f GB\", $bytes / 1073741824}"
     elif ((bytes >= 1048576)); then
-        printf '%.1f MB' "$(echo "$bytes / 1048576" | bc -l)"
+        awk "BEGIN {printf \"%.1f MB\", $bytes / 1048576}"
     elif ((bytes >= 1024)); then
-        printf '%.1f KB' "$(echo "$bytes / 1024" | bc -l)"
+        awk "BEGIN {printf \"%.1f KB\", $bytes / 1024}"
     else
         printf '%d B' "$bytes"
     fi
+}
+
+# --- Display Mapping Table ---------------------------------------------------
+# Populates global READY_VIDEOS array with videos that have a contact sheet
+# and haven't been processed yet.
+READY_VIDEOS=()
+
+display_mapping() {
+    local videos=("$@")
+    local ready=0 done=0 nosheet=0
+    READY_VIDEOS=()
+
+    echo -e "${BOLD}  VIDEO                              STATUS       CONTACT SHEET${NC}"
+    echo -e "  ${DIM}──────────────────────────────────  ───────────  ─────────────────────${NC}"
+
+    for video in "${videos[@]}"; do
+        local name="${video##*/}"
+        name="${name%.mp4}"
+        local sheet="$CONTACT_SHEET_DIR/$name.jpg"
+        local output="$CORRECTED_DIR/$name.mp4"
+
+        local display_name="$name.mp4"
+        # Pad or truncate to 34 chars
+        if ((${#display_name} > 34)); then
+            display_name="${display_name:0:31}..."
+        fi
+
+        if [[ -f "$output" ]]; then
+            printf "  ${DIM}%-34s  %-11s  %s${NC}\n" "$display_name" "done" "—"
+            ((done++)) || true
+        elif [[ -f "$sheet" ]]; then
+            printf "  %-34s  ${GREEN}%-11s${NC}  %s\n" "$display_name" "ready" "${sheet##*/}"
+            ((ready++)) || true
+            READY_VIDEOS+=("$video")
+        else
+            printf "  %-34s  ${YELLOW}%-11s${NC}  %s\n" "$display_name" "no sheet" "—"
+            ((nosheet++)) || true
+        fi
+    done
+
+    echo ""
+    echo -e "  ${GREEN}ready${NC}: $ready    ${DIM}done${NC}: $done    ${YELLOW}no sheet${NC}: $nosheet"
+    echo ""
+
+    if ((ready == 0)); then
+        log_warn "No videos ready to process."
+        exit 0
+    fi
+
+    printf "  Proceed with %d videos? [y/N]: " "$ready"
+    read -r answer
+    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        log_info "Aborted by user."
+        exit 0
+    fi
+    echo ""
+}
+
+# --- Handle Orphaned Contact Sheets -----------------------------------------
+handle_orphaned_sheets() {
+    local videos=("$@")
+
+    # Write known video stems to a temp file (avoids per-iteration echo|grep)
+    local stems_file
+    stems_file=$(mktemp)
+
+    # Stems from current directory videos
+    for video in "${videos[@]}"; do
+        local stem="${video##*/}"
+        echo "${stem%.mp4}"
+    done >> "$stems_file"
+
+    # Stems from already-corrected videos
+    if [[ -d "$CORRECTED_DIR" ]]; then
+        while IFS= read -r -d '' f; do
+            local stem="${f##*/}"
+            echo "${stem%.mp4}"
+        done < <(find "$CORRECTED_DIR" -maxdepth 1 -name "*.mp4" -not -name "._*" -print0 2>/dev/null) >> "$stems_file"
+    fi
+
+    # Deduplicate in place
+    sort -u -o "$stems_file" "$stems_file"
+
+    # Find orphaned contact sheets
+    local orphans=()
+    if [[ -d "$CONTACT_SHEET_DIR" ]]; then
+        while IFS= read -r -d '' sheet; do
+            local stem="${sheet##*/}"
+            stem="${stem%.jpg}"
+            if ! grep -qxF "$stem" "$stems_file"; then
+                orphans+=("$sheet")
+            fi
+        done < <(find "$CONTACT_SHEET_DIR" -maxdepth 1 -name "*.jpg" -not -name "._*" -print0 2>/dev/null)
+    fi
+
+    rm -f "$stems_file"
+
+    if ((${#orphans[@]} == 0)); then
+        log_info "No orphaned contact sheets."
+        echo ""
+        return
+    fi
+
+    log_warn "Found ${#orphans[@]} orphaned contact sheet(s) (no matching video):"
+    for orphan in "${orphans[@]}"; do
+        echo -e "    ${DIM}${orphan##*/}${NC}"
+    done
+    echo ""
+
+    printf "  Delete these orphaned contact sheets? [y/N]: "
+    read -r answer
+    if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+        for orphan in "${orphans[@]}"; do
+            rm -f "$orphan"
+            log_to_file "DELETE orphan: ${orphan##*/}"
+        done
+        log_ok "Deleted ${#orphans[@]} orphaned contact sheet(s)."
+    else
+        log_info "Keeping orphaned contact sheets."
+    fi
+    echo ""
 }
 
 # --- Process a Single Video --------------------------------------------------
@@ -74,9 +193,9 @@ process_video() {
     local video="$1"
     local video_index="$2"
     local video_total="$3"
-    
-    local name
-    name=$(basename "$video" .mp4)
+
+    local name="${video##*/}"
+    name="${name%.mp4}"
     local output_file="$CORRECTED_DIR/$name.mp4"
     local prefix="${DIM}[${video_index}/${video_total}]${NC}"
 
@@ -84,12 +203,7 @@ process_video() {
     if [[ -f "$output_file" ]]; then
         log_skip "$prefix ${DIM}$name.mp4${NC} — already exists in $CORRECTED_DIR"
         log_to_file "SKIP $name.mp4 (already exists in corrected)"
-        
-        # Move original to backup if output exists (matching original script behavior)
-        if [[ -f "$video" ]]; then
-            log_info "      ${DIM}Moving original to backup...${NC}"
-            mv "$video" "$BACKUP_DIR/"
-        fi
+
         return
     fi
 
@@ -105,7 +219,7 @@ process_video() {
         return
     fi
 
-    log_info "      ${DIM}├─ 🖼  Using cover: $(basename "$thumbnail_to_use")${NC}"
+    log_info "      ${DIM}├─ 🖼  Using cover: ${thumbnail_to_use##*/}${NC}"
 
     local start_time
     start_time=$(date +%s)
@@ -141,10 +255,6 @@ process_video() {
     log_ok "      ${DIM}└─ ${GREEN}Success${NC}${DIM} in ${duration}s → $(format_bytes "$filesize")${NC}"
     log_to_file "OK $name.mp4 in ${duration}s"
 
-    # Save the thumbnail in a dedicated folder instead of deleting it
-    mkdir -p "$SELECTED_THUMB_DIR"
-    mv "$thumbnail_to_use" "$SELECTED_THUMB_DIR/"
-    mv "$video" "$BACKUP_DIR/"
 }
 
 # --- Main --------------------------------------------------------------------
@@ -157,9 +267,7 @@ main() {
 
     # Ensure directories exist
     mkdir -p "$CORRECTED_DIR"
-    mkdir -p "$BACKUP_DIR"
     mkdir -p "$THUMBNAIL_DIR"
-    mkdir -p "$SELECTED_THUMB_DIR"
     
     # Initialize log
     : >> "$LOG_FILE"
@@ -170,8 +278,6 @@ main() {
         log_err "ffmpeg not found. Please install it."
         exit 1
     fi
-
-
 
     # Find videos
     local videos=()
@@ -201,28 +307,33 @@ main() {
     if ((VIDEO_MAX > 0)); then
         log_info "  ${DIM}├─ Limit:           ${NC}${YELLOW}$VIDEO_MAX${NC} (processing $total of $found)"
     fi
-    log_info "  ${DIM}├─ Output dir:      ${NC}$CORRECTED_DIR"
-    log_info "  ${DIM}└─ Backup dir:      ${NC}$BACKUP_DIR"
+    log_info "  ${DIM}└─ Output dir:      ${NC}$CORRECTED_DIR"
     echo ""
+
+    display_mapping "${videos[@]}"
+    handle_orphaned_sheets "${videos[@]}"
+
+    # Process only ready videos (filtered by display_mapping)
+    local ready_total=${#READY_VIDEOS[@]}
 
     local start_total=$(date +%s)
     local results_dir
     results_dir=$(mktemp -d)
 
-    log_info "Processing with $PARALLEL_JOBS parallel jobs..."
+    log_info "Processing $ready_total videos with $PARALLEL_JOBS parallel jobs..."
 
-    for i in "${!videos[@]}"; do
+    for i in "${!READY_VIDEOS[@]}"; do
         local idx=$((i + 1))
-        
+
         # Run in background
         (
-            if process_video "${videos[$i]}" "$idx" "$total"; then
+            if process_video "${READY_VIDEOS[$i]}" "$idx" "$ready_total"; then
                 touch "$results_dir/done_$idx"
             else
                 touch "$results_dir/fail_$idx"
             fi
         ) &
-        
+
         # Batch control: wait if we reached PARALLEL_JOBS
         if (( (i + 1) % PARALLEL_JOBS == 0 )); then
             wait
@@ -230,9 +341,12 @@ main() {
     done
     wait # Wait for the last batch
 
-    local processed failed
-    processed=$(find "$results_dir" -name "done_*" | wc -l | xargs)
-    failed=$(find "$results_dir" -name "fail_*" | wc -l | xargs)
+    # Count results using bash globbing instead of find|wc|xargs
+    local processed=0 failed=0
+    local done_files=("$results_dir"/done_*)
+    [[ -e "${done_files[0]}" ]] && processed=${#done_files[@]}
+    local fail_files=("$results_dir"/fail_*)
+    [[ -e "${fail_files[0]}" ]] && failed=${#fail_files[@]}
     rm -rf "$results_dir"
 
     local end_total=$(($(date +%s)))
@@ -244,7 +358,7 @@ main() {
     echo -e "${BOLD}║   📊 Summary                            ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
     echo ""
-    log_ok "Videos processed:  ${BOLD}$processed${NC} / $total"
+    log_ok "Videos processed:  ${BOLD}$processed${NC} / $ready_total"
     if ((failed > 0)); then
         log_err "Failed:            ${RED}$failed${NC}"
     fi
