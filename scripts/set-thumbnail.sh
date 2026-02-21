@@ -68,45 +68,57 @@ format_bytes() {
 }
 
 # --- Display Mapping Table ---------------------------------------------------
-# Populates global READY_VIDEOS array with videos that have a contact sheet
-# and haven't been processed yet.
+# Scans contact sheets and classifies each by video state.
+# Populates global READY_VIDEOS (video paths) and ORPHAN_SHEETS (sheet paths).
 READY_VIDEOS=()
+ORPHAN_SHEETS=()
 
 display_mapping() {
-    local videos=("$@")
-    local ready=0 done=0 nosheet=0
     READY_VIDEOS=()
+    ORPHAN_SHEETS=()
+    local ready=0 done=0 orphan=0
 
-    echo -e "${BOLD}  VIDEO                              STATUS       CONTACT SHEET${NC}"
-    echo -e "  ${DIM}──────────────────────────────────  ───────────  ─────────────────────${NC}"
+    # Scan contact sheets
+    local sheets=()
+    while IFS= read -r -d '' sheet; do
+        sheets+=("$sheet")
+    done < <(find "$CONTACT_SHEET_DIR" -maxdepth 1 -name "*.jpg" -not -name "._*" -print0 2>/dev/null | sort -z)
 
-    for video in "${videos[@]}"; do
-        local name="${video##*/}"
-        name="${name%.mp4}"
-        local sheet="$CONTACT_SHEET_DIR/$name.jpg"
-        local output="$CORRECTED_DIR/$name.mp4"
+    if ((${#sheets[@]} == 0)); then
+        log_warn "No contact sheets found in $CONTACT_SHEET_DIR"
+        exit 0
+    fi
 
-        local display_name="$name.mp4"
-        # Pad or truncate to 34 chars
+    log_info "Found ${BOLD}${#sheets[@]}${NC} contact sheets"
+    echo ""
+    echo -e "${BOLD}  CONTACT SHEET                      VIDEO${NC}"
+    echo -e "  ${DIM}──────────────────────────────────  ────────────${NC}"
+
+    for sheet in "${sheets[@]}"; do
+        local stem="${sheet##*/}"
+        stem="${stem%.jpg}"
+
+        local display_name="$stem"
         if ((${#display_name} > 34)); then
             display_name="${display_name:0:31}..."
         fi
 
-        if [[ -f "$output" ]]; then
-            printf "  ${DIM}%-34s  %-11s  %s${NC}\n" "$display_name" "done" "—"
+        if [[ -f "$CORRECTED_DIR/$stem.mp4" ]]; then
+            printf "  ${DIM}%-34s  done${NC}\n" "$display_name"
             ((done++)) || true
-        elif [[ -f "$sheet" ]]; then
-            printf "  %-34s  ${GREEN}%-11s${NC}  %s\n" "$display_name" "ready" "${sheet##*/}"
+        elif [[ -f "./$stem.mp4" ]]; then
+            printf "  %-34s  ${GREEN}ready${NC}\n" "$display_name"
             ((ready++)) || true
-            READY_VIDEOS+=("$video")
+            READY_VIDEOS+=("./$stem.mp4")
         else
-            printf "  %-34s  ${YELLOW}%-11s${NC}  %s\n" "$display_name" "no sheet" "—"
-            ((nosheet++)) || true
+            printf "  %-34s  ${YELLOW}no video${NC}\n" "$display_name"
+            ((orphan++)) || true
+            ORPHAN_SHEETS+=("$sheet")
         fi
     done
 
     echo ""
-    echo -e "  ${GREEN}ready${NC}: $ready    ${DIM}done${NC}: $done    ${YELLOW}no sheet${NC}: $nosheet"
+    echo -e "  ${GREEN}ready${NC}: $ready    ${DIM}done${NC}: $done    ${YELLOW}no video${NC}: $orphan"
     echo ""
 
     if ((ready == 0)); then
@@ -124,64 +136,20 @@ display_mapping() {
 }
 
 # --- Handle Orphaned Contact Sheets -----------------------------------------
+# Uses ORPHAN_SHEETS global populated by display_mapping.
 handle_orphaned_sheets() {
-    local videos=("$@")
-
-    # Write known video stems to a temp file (avoids per-iteration echo|grep)
-    local stems_file
-    stems_file=$(mktemp)
-
-    # Stems from current directory videos
-    for video in "${videos[@]}"; do
-        local stem="${video##*/}"
-        echo "${stem%.mp4}"
-    done >> "$stems_file"
-
-    # Stems from already-corrected videos
-    if [[ -d "$CORRECTED_DIR" ]]; then
-        while IFS= read -r -d '' f; do
-            local stem="${f##*/}"
-            echo "${stem%.mp4}"
-        done < <(find "$CORRECTED_DIR" -maxdepth 1 -name "*.mp4" -not -name "._*" -print0 2>/dev/null) >> "$stems_file"
-    fi
-
-    # Deduplicate in place
-    sort -u -o "$stems_file" "$stems_file"
-
-    # Find orphaned contact sheets
-    local orphans=()
-    if [[ -d "$CONTACT_SHEET_DIR" ]]; then
-        while IFS= read -r -d '' sheet; do
-            local stem="${sheet##*/}"
-            stem="${stem%.jpg}"
-            if ! grep -qxF "$stem" "$stems_file"; then
-                orphans+=("$sheet")
-            fi
-        done < <(find "$CONTACT_SHEET_DIR" -maxdepth 1 -name "*.jpg" -not -name "._*" -print0 2>/dev/null)
-    fi
-
-    rm -f "$stems_file"
-
-    if ((${#orphans[@]} == 0)); then
-        log_info "No orphaned contact sheets."
-        echo ""
+    if ((${#ORPHAN_SHEETS[@]} == 0)); then
         return
     fi
 
-    log_warn "Found ${#orphans[@]} orphaned contact sheet(s) (no matching video):"
-    for orphan in "${orphans[@]}"; do
-        echo -e "    ${DIM}${orphan##*/}${NC}"
-    done
-    echo ""
-
-    printf "  Delete these orphaned contact sheets? [y/N]: "
+    printf "  Delete %d orphaned contact sheet(s)? [y/N]: " "${#ORPHAN_SHEETS[@]}"
     read -r answer
     if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
-        for orphan in "${orphans[@]}"; do
+        for orphan in "${ORPHAN_SHEETS[@]}"; do
             rm -f "$orphan"
             log_to_file "DELETE orphan: ${orphan##*/}"
         done
-        log_ok "Deleted ${#orphans[@]} orphaned contact sheet(s)."
+        log_ok "Deleted ${#ORPHAN_SHEETS[@]} orphaned contact sheet(s)."
     else
         log_info "Keeping orphaned contact sheets."
     fi
@@ -279,42 +247,22 @@ main() {
         exit 1
     fi
 
-    # Find videos
-    local videos=()
-    while IFS= read -r -d '' f; do
-        videos+=("$f")
-    done < <(find . -maxdepth 1 -name "*.mp4" -not -name "._*" -print0 | sort -z)
-
-    local found=${#videos[@]}
-
-    if ((found == 0)); then
-        log_warn "No .mp4 files found in current directory"
-        exit 0
-    fi
-
-    # Apply limit
-    local total=$found
-    if ((VIDEO_MAX > 0 && VIDEO_MAX < found)); then
-        # Check if first argument was passed as number (legacy support)
-        # But we handle CLI args below, so VIDEO_MAX is set.
-        videos=("${videos[@]:0:$VIDEO_MAX}")
-        total=$VIDEO_MAX
-    fi
-
     echo ""
     log_info "Configuration"
-    log_info "  ${DIM}├─ Videos found:    ${NC}${BOLD}$found${NC}"
-    if ((VIDEO_MAX > 0)); then
-        log_info "  ${DIM}├─ Limit:           ${NC}${YELLOW}$VIDEO_MAX${NC} (processing $total of $found)"
-    fi
+    log_info "  ${DIM}├─ Sheets dir:      ${NC}$CONTACT_SHEET_DIR"
     log_info "  ${DIM}└─ Output dir:      ${NC}$CORRECTED_DIR"
     echo ""
 
-    display_mapping "${videos[@]}"
-    handle_orphaned_sheets "${videos[@]}"
+    display_mapping
+    handle_orphaned_sheets
 
-    # Process only ready videos (filtered by display_mapping)
+    # Apply limit to ready videos
     local ready_total=${#READY_VIDEOS[@]}
+    if ((VIDEO_MAX > 0 && VIDEO_MAX < ready_total)); then
+        READY_VIDEOS=("${READY_VIDEOS[@]:0:$VIDEO_MAX}")
+        ready_total=$VIDEO_MAX
+        log_info "Limited to $ready_total videos (--video-max $VIDEO_MAX)"
+    fi
 
     local start_total=$(date +%s)
     local results_dir

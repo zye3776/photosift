@@ -62,11 +62,11 @@ process_group() {
     fi
 
     # Determine command (ImageMagick v7 uses 'magick montage')
-    local cmd="montage"
+    local cmd=(montage)
     local has_im=true
     if ! command -v montage &> /dev/null; then
         if command -v magick &> /dev/null; then
-            cmd="magick montage"
+            cmd=(magick montage)
         else
             has_im=false
         fi
@@ -82,7 +82,7 @@ process_group() {
         '6' | '5' | '4')
             if [ "$has_im" = true ]; then
                 log_info "      ${DIM}├─ 🎨 Generating grid collage ($count tiles)...${NC}"
-                $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
+                "${cmd[@]}" -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
             else
                 log_warn "      ${DIM}├─ ⚠ Skip grid: ImageMagick missing${NC}"
             fi
@@ -90,13 +90,13 @@ process_group() {
         '3' | '2')
             if [ "$has_im" = true ]; then
                 log_info "      ${DIM}├─ 🎨 Generating vertical stack ($count tiles)...${NC}"
-                $cmd -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Stack generation failed${NC}"
+                "${cmd[@]}" -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Stack generation failed${NC}"
             else
                 # Fallback to ffmpeg for vertical stacking (very fast)
                 log_info "      ${DIM}├─ ⚡ Generating stack ($count tiles) via FFmpeg...${NC}"
-                local inputs=""
-                for t in "${thumbs[@]}"; do inputs="$inputs -i $t"; done
-                ffmpeg -y -hide_banner -loglevel error $inputs -filter_complex "vstack=inputs=$count" "$contact_sheet" || log_err "      ${DIM}├─ ✗ FFmpeg stack failed${NC}"
+                local inputs=()
+                for t in "${thumbs[@]}"; do inputs+=(-i "$t"); done
+                ffmpeg -y -hide_banner -loglevel error "${inputs[@]}" -filter_complex "vstack=inputs=$count" "$contact_sheet" || log_err "      ${DIM}├─ ✗ FFmpeg stack failed${NC}"
             fi
             ;;
         *)
@@ -132,15 +132,25 @@ main() {
     fi
 
     # Identify unique video names from thumbnails
-    # Pattern: name-[0-9]*.jpg
+    # Pattern: name-[0-9]*.ext → stem is everything before the last -DIGITS.ext
     log_info "Scanning thumbnails..."
+    local stems_file
+    stems_file=$(mktemp)
+
+    while IFS= read -r -d '' f; do
+        local base="${f##*/}"
+        # Strip shortest suffix matching -DIGIT... (e.g. -003.jpg → stem)
+        printf '%s\n' "${base%-[0-9]*}"
+    done < <(find "$THUMBNAIL_DIR" -maxdepth 1 -name "*-[0-9]*.*" -not -name "._*" -print0 2>/dev/null) > "$stems_file"
+
+    # Deduplicate stems (not filenames)
+    sort -u -o "$stems_file" "$stems_file"
+
     local names=()
-    while IFS= read -r f; do
-        # Extract name by removing the suffix -[0-9]*.jpg
-        local n
-        n=$(echo "$f" | sed -E 's/-[0-9]+\.[a-zA-Z0-9]+$//')
-        names+=("$n")
-    done < <(find "$THUMBNAIL_DIR" -maxdepth 1 -name "*-[0-9]*.*" -not -name "._*" -exec basename {} \; | sort -u)
+    while IFS= read -r stem; do
+        [[ -n "$stem" ]] && names+=("$stem")
+    done < "$stems_file"
+    rm -f "$stems_file"
 
     local total=${#names[@]}
 
