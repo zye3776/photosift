@@ -134,7 +134,8 @@ display_scan() {
     fi
 
     printf "  Proceed with %d videos? [y/N]: " "$ready"
-    read -r answer
+    read -r -n 1 answer < /dev/tty
+    echo
     if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
         log_info "Aborted by user."
         exit 0

@@ -18,7 +18,7 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 THUMBNAIL_DIR="./thumbnails"
 CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
-BACKUP_DIR="./backup"
+CORRECTED_DIR="./corrected"
 LOG_FILE="./set-thumbnail.log"
 VIDEO_MAX=1000              # Default limit from original script (0 = all)
 AUTO_YES=false              # Skip confirmation prompts
@@ -195,10 +195,10 @@ process_video() {
     name="${name%.mp4}"
     local prefix="${DIM}[${video_index}/${video_total}]${NC}"
 
-    # Check if already processed and backed up
-    if [[ -f "$BACKUP_DIR/$name.mp4" ]]; then
-        log_skip "$prefix ${DIM}$name.mp4${NC} — already in $BACKUP_DIR"
-        log_to_file "SKIP $name.mp4 (already in backup)"
+    # Check if already processed
+    if [[ -f "$CORRECTED_DIR/$name.mp4" ]]; then
+        log_skip "$prefix ${DIM}$name.mp4${NC} — already in $CORRECTED_DIR"
+        log_to_file "SKIP $name.mp4 (already in corrected)"
         return
     fi
 
@@ -239,42 +239,20 @@ process_video() {
     local filesize
     filesize=$(stat -f%z "$video" 2>/dev/null || stat -c%s "$video" 2>/dev/null || echo "0")
 
-    log_ok "      ${DIM}└─ ${GREEN}Success${NC}${DIM} in ${duration}s → $(format_bytes "$filesize")${NC}"
-    log_to_file "OK $name.mp4 in ${duration}s"
+    # Move video to corrected folder
+    mkdir -p "$CORRECTED_DIR"
+    mv "$video" "$CORRECTED_DIR/$name.mp4"
+
+    # Delete the contact sheet
+    rm -f "$thumbnail_to_use"
+
+    log_ok "      ${DIM}├─ ${GREEN}Success${NC}${DIM} in ${duration}s → $(format_bytes "$filesize")${NC}"
+    log_ok "      ${DIM}└─ Moved to $CORRECTED_DIR/, deleted ${thumbnail_to_use##*/}${NC}"
+    log_to_file "OK $name.mp4 in ${duration}s → $CORRECTED_DIR/, removed contact sheet"
 
     PROCESSED_VIDEOS+=("$video")
 }
 
-# --- Backup Processed Videos ------------------------------------------------
-backup_processed_videos() {
-    if ((${#PROCESSED_VIDEOS[@]} == 0)); then
-        return
-    fi
-
-    echo ""
-    if [[ "$AUTO_YES" == true ]]; then
-        local answer="y"
-    else
-        printf "  Move %d processed video(s) to $BACKUP_DIR/? [y/N]: " "${#PROCESSED_VIDEOS[@]}"
-        read -r -n 1 answer < /dev/tty
-        echo
-    fi
-    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-        log_info "Skipping backup."
-        return
-    fi
-
-    mkdir -p "$BACKUP_DIR"
-    local moved=0
-    for video in "${PROCESSED_VIDEOS[@]}"; do
-        local name="${video##*/}"
-        mv "$video" "$BACKUP_DIR/$name"
-        log_ok "Moved $name → $BACKUP_DIR/"
-        log_to_file "BACKUP $name → $BACKUP_DIR/"
-        ((moved++)) || true
-    done
-    log_ok "Backed up ${BOLD}$moved${NC} video(s)."
-}
 
 # --- Main --------------------------------------------------------------------
 main() {
@@ -308,7 +286,7 @@ main() {
     echo ""
     log_info "Configuration"
     log_info "  ${DIM}├─ Sheets dir:      ${NC}$CONTACT_SHEET_DIR"
-    log_info "  ${DIM}└─ Backup dir:      ${NC}$BACKUP_DIR"
+    log_info "  ${DIM}└─ Corrected dir:   ${NC}$CORRECTED_DIR"
     echo ""
 
     display_mapping
@@ -339,9 +317,6 @@ main() {
     local end_total=$(($(date +%s)))
     local elapsed=$((end_total - start_total))
 
-    # Backup prompt
-    backup_processed_videos
-
     # Summary
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
@@ -352,7 +327,7 @@ main() {
     if ((failed > 0)); then
         log_err "Failed:            ${RED}$failed${NC}"
     fi
-    log_ok "Backed up:         ${BOLD}${#PROCESSED_VIDEOS[@]}${NC} video(s)"
+    log_ok "Moved to corrected: ${BOLD}${#PROCESSED_VIDEOS[@]}${NC} video(s)"
     log_ok "Total time:        ${BOLD}$(format_duration $elapsed)${NC}"
     log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
     echo ""
