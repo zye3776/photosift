@@ -106,17 +106,31 @@ display_mapping() {
             display_name="${display_name:0:31}..."
         fi
 
-        if [[ -f "$BACKUP_DIR/$stem.mp4" ]]; then
-            printf "  ${DIM}%-34s  done${NC}\n" "$display_name"
-            ((done++)) || true
-        elif [[ -f "./$stem.mp4" ]]; then
+        if [[ -f "./$stem.mp4" ]]; then
+            # Video in current dir — ready to process
             printf "  %-34s  ${GREEN}ready${NC}\n" "$display_name"
             ((ready++)) || true
             READY_VIDEOS+=("./$stem.mp4")
         else
-            printf "  %-34s  ${YELLOW}no video${NC}\n" "$display_name"
-            ((orphan++)) || true
-            ORPHAN_SHEETS+=("$sheet")
+            # Search subdirectories for the video
+            local found_dir=""
+            for dir in ./*/; do
+                [[ -d "$dir" ]] || continue
+                if [[ -f "$dir$stem.mp4" ]]; then
+                    found_dir="${dir%/}"
+                    found_dir="${found_dir##*/}"
+                    break
+                fi
+            done
+
+            if [[ -n "$found_dir" ]]; then
+                printf "  ${DIM}%-34s  done (%s)${NC}\n" "$display_name" "$found_dir"
+                ((done++)) || true
+            else
+                printf "  %-34s  ${YELLOW}no video${NC}\n" "$display_name"
+                ((orphan++)) || true
+                ORPHAN_SHEETS+=("$sheet")
+            fi
         fi
     done
 
