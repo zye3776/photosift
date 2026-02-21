@@ -9,6 +9,8 @@
 # Usage:
 #   ./set-thumbnail.sh                 # Process up to 1000 videos
 #   ./set-thumbnail.sh --video-max 50  # Process only 50 videos
+#   ./set-thumbnail.sh --yes           # Skip all confirmation prompts
+#   ./set-thumbnail.sh -y              # Short form of --yes
 # ============================================================================
 
 set -euo pipefail
@@ -19,6 +21,7 @@ CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
 BACKUP_DIR="./backup"
 LOG_FILE="./set-thumbnail.log"
 VIDEO_MAX=1000              # Default limit from original script (0 = all)
+AUTO_YES=false              # Skip confirmation prompts
 
 # --- Colors & Formatting ----------------------------------------------------
 RED='\033[0;31m'
@@ -126,11 +129,15 @@ display_mapping() {
         exit 0
     fi
 
-    printf "  Proceed with %d videos? [y/N]: " "$ready"
-    read -r answer
-    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-        log_info "Aborted by user."
-        exit 0
+    if [[ "$AUTO_YES" == true ]]; then
+        log_info "Proceeding with $ready videos (--yes)"
+    else
+        printf "  Proceed with %d videos? [y/N]: " "$ready"
+        read -r answer
+        if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+            log_info "Aborted by user."
+            exit 0
+        fi
     fi
     echo ""
 }
@@ -142,8 +149,12 @@ handle_orphaned_sheets() {
         return
     fi
 
-    printf "  Delete %d orphaned contact sheet(s)? [y/N]: " "${#ORPHAN_SHEETS[@]}"
-    read -r answer
+    if [[ "$AUTO_YES" == true ]]; then
+        local answer="y"
+    else
+        printf "  Delete %d orphaned contact sheet(s)? [y/N]: " "${#ORPHAN_SHEETS[@]}"
+        read -r answer
+    fi
     if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
         for orphan in "${ORPHAN_SHEETS[@]}"; do
             rm -f "$orphan"
@@ -225,8 +236,12 @@ backup_processed_videos() {
     fi
 
     echo ""
-    printf "  Move %d processed video(s) to $BACKUP_DIR/? [y/N]: " "${#PROCESSED_VIDEOS[@]}"
-    read -r answer
+    if [[ "$AUTO_YES" == true ]]; then
+        local answer="y"
+    else
+        printf "  Move %d processed video(s) to $BACKUP_DIR/? [y/N]: " "${#PROCESSED_VIDEOS[@]}"
+        read -r answer
+    fi
     if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
         log_info "Skipping backup."
         return
@@ -341,9 +356,13 @@ while [[ $# -gt 0 ]]; do
             VIDEO_MAX="$2"
             shift 2
             ;;
+        -y|--yes)
+            AUTO_YES=true
+            shift
+            ;;
         *)
             log_err "Unknown option: $1"
-            echo "Usage: $(basename "$0") [limit] [--video-max N]"
+            echo "Usage: $(basename "$0") [limit] [--video-max N] [-y|--yes]"
             exit 1
             ;;
     esac

@@ -50,8 +50,8 @@ process_group() {
         return 0
     fi
     local count=${#thumbs[@]}
-    if (( count > 6 )); then
-        log_skip "$prefix ${DIM}$name${NC} — ignored ($count thumbnails)"
+    if (( count != 4 && count != 6 )); then
+        log_skip "$prefix ${DIM}$name${NC} — skipped ($count thumbnails, need 4 or 6)"
         return 0
     fi
 
@@ -74,35 +74,12 @@ process_group() {
 
     log_info "$prefix ${BOLD}$name${NC}"
 
-    case $count in
-        1)
-            log_info "      ${DIM}├─ 🖼  Single frame kept, copying...${NC}"
-            cp "${thumbs[0]}" "$contact_sheet"
-            ;;
-        '6' | '5' | '4')
-            if [ "$has_im" = true ]; then
-                log_info "      ${DIM}├─ 🎨 Generating grid collage ($count tiles)...${NC}"
-                "${cmd[@]}" -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
-            else
-                log_warn "      ${DIM}├─ ⚠ Skip grid: ImageMagick missing${NC}"
-            fi
-            ;;
-        '3' | '2')
-            if [ "$has_im" = true ]; then
-                log_info "      ${DIM}├─ 🎨 Generating vertical stack ($count tiles)...${NC}"
-                "${cmd[@]}" -background none -define jpeg:size=400x400 -geometry +0+0 -tile 1x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Stack generation failed${NC}"
-            else
-                # Fallback to ffmpeg for vertical stacking (very fast)
-                log_info "      ${DIM}├─ ⚡ Generating stack ($count tiles) via FFmpeg...${NC}"
-                local inputs=()
-                for t in "${thumbs[@]}"; do inputs+=(-i "$t"); done
-                ffmpeg -y -hide_banner -loglevel error "${inputs[@]}" -filter_complex "vstack=inputs=$count" "$contact_sheet" || log_err "      ${DIM}├─ ✗ FFmpeg stack failed${NC}"
-            fi
-            ;;
-        *)
-            log_warn "      ${DIM}├─ ⚠ Unexpected thumbnail count: $count${NC}"
-            ;;
-    esac
+    if [ "$has_im" = true ]; then
+        log_info "      ${DIM}├─ 🎨 Generating grid collage ($count tiles)...${NC}"
+        "${cmd[@]}" -background none -define jpeg:size=400x400 -geometry +0+0 -resize 200x200 -crop 160x200+20+0 -tile 2x "${thumbs[@]}" -strip "$contact_sheet" || log_err "      ${DIM}├─ ✗ Collage generation failed${NC}"
+    else
+        log_warn "      ${DIM}├─ ⚠ Skip grid: ImageMagick missing${NC}"
+    fi
     
     if [[ -f "$contact_sheet" ]]; then
         log_ok "      ${DIM}└─ ✓ Success${NC}"
