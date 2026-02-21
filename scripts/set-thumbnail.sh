@@ -147,7 +147,8 @@ display_mapping() {
         log_info "Proceeding with $ready videos (--yes)"
     else
         printf "  Proceed with %d videos? [y/N]: " "$ready"
-        read -r answer
+        read -r -n 1 answer < /dev/tty
+        echo
         if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
             log_info "Aborted by user."
             exit 0
@@ -167,7 +168,8 @@ handle_orphaned_sheets() {
         local answer="y"
     else
         printf "  Delete %d orphaned contact sheet(s)? [y/N]: " "${#ORPHAN_SHEETS[@]}"
-        read -r answer
+        read -r -n 1 answer < /dev/tty
+        echo
     fi
     if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
         for orphan in "${ORPHAN_SHEETS[@]}"; do
@@ -254,7 +256,8 @@ backup_processed_videos() {
         local answer="y"
     else
         printf "  Move %d processed video(s) to $BACKUP_DIR/? [y/N]: " "${#PROCESSED_VIDEOS[@]}"
-        read -r answer
+        read -r -n 1 answer < /dev/tty
+        echo
     fi
     if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
         log_info "Skipping backup."
