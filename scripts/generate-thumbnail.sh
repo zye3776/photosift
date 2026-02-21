@@ -4,14 +4,15 @@
 # Uses keyframe seeking, hardware acceleration, and parallel processing
 # https://superuser.com/questions/597945/set-mp4-thumbnail
 #
+# Scans videos first and shows a status table (done/ready) before processing.
+# User must approve before any work begins.
+#
 # Usage:
 #   ./generate-thumbnail.sh                 # Process all videos
 #   ./generate-thumbnail.sh --video-max 3   # Process only first 3 videos
 # ============================================================================
 
 set -euo pipefail
-
-brew upgrade ffmpeg
 
 # --- Configuration -----------------------------------------------------------
 THUMBNAIL_DIR="./thumbnails"
@@ -63,14 +64,82 @@ format_duration() {
 format_bytes() {
     local bytes=$1
     if ((bytes >= 1073741824)); then
-        printf '%.1f GB' "$(echo "$bytes / 1073741824" | bc -l)"
+        awk "BEGIN {printf \"%.1f GB\", $bytes / 1073741824}"
     elif ((bytes >= 1048576)); then
-        printf '%.1f MB' "$(echo "$bytes / 1048576" | bc -l)"
+        awk "BEGIN {printf \"%.1f MB\", $bytes / 1048576}"
     elif ((bytes >= 1024)); then
-        printf '%.1f KB' "$(echo "$bytes / 1024" | bc -l)"
+        awk "BEGIN {printf \"%.1f KB\", $bytes / 1024}"
     else
         printf '%d B' "$bytes"
     fi
+}
+
+# --- Scan & Approval ---------------------------------------------------------
+# Scans for videos, classifies each by thumbnail state, shows a status table,
+# and prompts the user before processing. Populates READY_VIDEOS global.
+READY_VIDEOS=()
+
+display_scan() {
+    READY_VIDEOS=()
+    local ready=0 done_count=0
+
+    # Discover all videos
+    local videos=()
+    while IFS= read -r -d '' f; do
+        videos+=("$f")
+    done < <(find . -maxdepth 1 -name "*.mp4" -not -name "._*" -print0 | sort -z)
+
+    if ((${#videos[@]} == 0)); then
+        log_warn "No .mp4 files found in current directory"
+        exit 0
+    fi
+
+    log_info "Found ${BOLD}${#videos[@]}${NC} videos"
+    echo ""
+    echo -e "${BOLD}  VIDEO                                STATUS${NC}"
+    echo -e "  ${DIM}────────────────────────────────────  ────────────${NC}"
+
+    for video in "${videos[@]}"; do
+        local name
+        name=$(basename "$video" .mp4)
+
+        local display_name="$name"
+        if ((${#display_name} > 36)); then
+            display_name="${display_name:0:33}..."
+        fi
+
+        # Check if thumbnails already exist
+        local thumb_count=0
+        if compgen -G "$THUMBNAIL_DIR/$name-"[0-9]*.jpg > /dev/null 2>&1; then
+            thumb_count=$(find "$THUMBNAIL_DIR" -name "$name-*.jpg" -not -name "._*" 2>/dev/null | wc -l | tr -d ' ')
+        fi
+
+        if ((thumb_count > 0)); then
+            printf "  ${DIM}%-36s  done (%d frames)${NC}\n" "$display_name" "$thumb_count"
+            ((done_count++)) || true
+        else
+            printf "  %-36s  ${GREEN}ready${NC}\n" "$display_name"
+            ((ready++)) || true
+            READY_VIDEOS+=("$video")
+        fi
+    done
+
+    echo ""
+    echo -e "  ${GREEN}ready${NC}: $ready    ${DIM}done${NC}: $done_count"
+    echo ""
+
+    if ((ready == 0)); then
+        log_ok "All videos already have thumbnails."
+        exit 0
+    fi
+
+    printf "  Proceed with %d videos? [y/N]: " "$ready"
+    read -r answer
+    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        log_info "Aborted by user."
+        exit 0
+    fi
+    echo ""
 }
 
 # --- Helper: ffprobe with retry ----------------------------------------------
@@ -377,7 +446,7 @@ generate_thumb() {
 
     local speed="N/A"
     if ((elapsed > 0)); then
-        speed="$(echo "scale=1; $count / $elapsed" | bc) frames/sec"
+        speed="$(awk "BEGIN {printf \"%.1f\", $count / $elapsed}") frames/sec"
     fi
 
     if ((errors == 0)); then
@@ -424,32 +493,20 @@ main() {
     local hwaccel
     hwaccel=$(detect_hwaccel)
 
-    # Discover videos — exclude macOS ._* resource fork files
-    # -not -name "._*" filters out the metadata files macOS creates on
-    # external drives (FAT32/exFAT/SMB). These look like .mp4 files but
-    # contain only Finder metadata and have no valid moov atom.
-    local videos=()
-    while IFS= read -r -d '' f; do
-        videos+=("$f")
-    done < <(find . -maxdepth 1 -name "*.mp4" -not -name "._*" -print0 | sort -z)
+    # Scan videos — show status table and prompt for approval
+    display_scan
 
-    local found=${#videos[@]}
-
-    if ((found == 0)); then
-        log_warn "No .mp4 files found in current directory"
-        exit 0
-    fi
-
-    # Apply --video-max limit
+    # Apply --video-max limit to approved videos
+    local found=${#READY_VIDEOS[@]}
     local total=$found
     if ((VIDEO_MAX > 0 && VIDEO_MAX < found)); then
-        videos=("${videos[@]:0:$VIDEO_MAX}")
+        READY_VIDEOS=("${READY_VIDEOS[@]:0:$VIDEO_MAX}")
         total=$VIDEO_MAX
     fi
 
     # Total input size (of selected videos only)
     local total_size=0
-    for v in "${videos[@]}"; do
+    for v in "${READY_VIDEOS[@]}"; do
         local s
         s=$(stat -f%z "$v" 2>/dev/null || stat -c%s "$v" 2>/dev/null || echo "0")
         total_size=$((total_size + s))
@@ -457,26 +514,26 @@ main() {
 
     echo ""
     log_info "Configuration"
-    log_info "  ${DIM}├─ Videos found:    ${NC}${BOLD}$found${NC}"
-    if ((VIDEO_MAX > 0)); then
-        log_info "  ${DIM}├─ Video limit:     ${NC}${YELLOW}--video-max $VIDEO_MAX${NC} (processing $total of $found)"
+    log_info "  ${DIM}├─ Videos to process: ${NC}${BOLD}$total${NC}"
+    if ((VIDEO_MAX > 0 && VIDEO_MAX < found)); then
+        log_info "  ${DIM}├─ Video limit:      ${NC}${YELLOW}--video-max $VIDEO_MAX${NC} (processing $total of $found ready)"
     fi
-    log_info "  ${DIM}├─ Total size:      ${NC}$(format_bytes $total_size)"
-    log_info "  ${DIM}├─ Frame interval:  ${NC}every ${INTERVAL_SECS}s"
-    log_info "  ${DIM}├─ Max frames:      ${NC}$MAX_FRAMES per video"
-    log_info "  ${DIM}├─ Thumbnail size:  ${NC}${THUMB_WIDTH}px wide, quality $JPEG_QUALITY"
-    log_info "  ${DIM}├─ Parallel jobs:   ${NC}$PARALLEL_JOBS"
-    log_info "  ${DIM}├─ ffprobe retries: ${NC}$FFPROBE_RETRIES (${FFPROBE_RETRY_DELAY}s delay)"
-    log_info "  ${DIM}└─ Output dir:      ${NC}$THUMBNAIL_DIR"
+    log_info "  ${DIM}├─ Total size:       ${NC}$(format_bytes $total_size)"
+    log_info "  ${DIM}├─ Frame interval:   ${NC}every ${INTERVAL_SECS}s"
+    log_info "  ${DIM}├─ Max frames:       ${NC}$MAX_FRAMES per video"
+    log_info "  ${DIM}├─ Thumbnail size:   ${NC}${THUMB_WIDTH}px wide, quality $JPEG_QUALITY"
+    log_info "  ${DIM}├─ Parallel jobs:    ${NC}$PARALLEL_JOBS"
+    log_info "  ${DIM}├─ ffprobe retries:  ${NC}$FFPROBE_RETRIES (${FFPROBE_RETRY_DELAY}s delay)"
+    log_info "  ${DIM}└─ Output dir:       ${NC}$THUMBNAIL_DIR"
     echo ""
 
     # Process videos
     local global_start processed=0 failed=0
     global_start=$(date +%s)
 
-    for i in "${!videos[@]}"; do
+    for i in "${!READY_VIDEOS[@]}"; do
         local idx=$((i + 1))
-        if generate_thumb "${videos[$i]}" "$idx" "$total" "$hwaccel"; then
+        if generate_thumb "${READY_VIDEOS[$i]}" "$idx" "$total" "$hwaccel"; then
             processed=$((processed + 1))
         else
             failed=$((failed + 1))
@@ -504,9 +561,6 @@ main() {
     echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
     echo ""
     log_ok "Videos processed:  ${BOLD}$processed${NC} / $total"
-    if ((VIDEO_MAX > 0)); then
-        log_info "                   ${DIM}($((found - total)) videos skipped by --video-max)${NC}"
-    fi
     if ((failed > 0)); then
         log_err "Failed:            ${RED}$failed${NC}"
     fi
@@ -514,7 +568,7 @@ main() {
     log_ok "Total time:        ${BOLD}$(format_duration $global_elapsed)${NC}"
     if ((global_elapsed > 0 && total_thumbs > 0)); then
         local avg
-        avg=$(echo "scale=1; $total_thumbs / $global_elapsed" | bc)
+        avg=$(awk "BEGIN {printf \"%.1f\", $total_thumbs / $global_elapsed}")
         log_ok "Avg speed:         ${BOLD}${avg} frames/sec${NC}"
     fi
     log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
