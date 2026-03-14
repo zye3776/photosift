@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "bun run src/server.ts",
-    "dev": "bun --watch run src/server.ts"
+    "dev": "PORTLESS_PORT=80 portless photosift bun --watch run src/server.ts"
   },
   "dependencies": {
     "effect": "^3.12.0",
