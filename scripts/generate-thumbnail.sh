@@ -10,6 +10,7 @@
 # Usage:
 #   ./generate-thumbnail.sh                 # Process all videos
 #   ./generate-thumbnail.sh --video-max 3   # Process only first 3 videos
+#   ./generate-thumbnail.sh --log           # Enable file logging
 # ============================================================================
 
 set -euo pipefail
@@ -22,6 +23,7 @@ THUMB_WIDTH=320             # Thumbnail width (-1 for original)
 JPEG_QUALITY=5              # 2=best, 31=worst (5 is good for thumbnails)
 PARALLEL_JOBS=4             # Number of videos to process in parallel
 LOG_FILE="./thumbnails/generate.log"
+LOG_ENABLED=false           # Set to true with --log flag
 VIDEO_MAX=0                 # 0 = process all, N = process first N videos only
 FFPROBE_RETRIES=3           # Number of retries for ffprobe on failure
 FFPROBE_RETRY_DELAY=2       # Seconds between retries
@@ -45,6 +47,7 @@ log_err()  { log "${RED}✗${NC}  $*"; }
 log_skip() { log "${DIM}⏭${NC}  $*"; }
 
 log_to_file() {
+    [[ "$LOG_ENABLED" == true ]] || return 0
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
@@ -468,7 +471,9 @@ main() {
     echo ""
 
     mkdir -p "$THUMBNAIL_DIR"
-    : > "$LOG_FILE"
+    if [[ "$LOG_ENABLED" == true ]]; then
+        : > "$LOG_FILE"
+    fi
 
     # Clean up macOS resource fork files that cause ffprobe errors
     # ._*.mp4 files are metadata forks created by macOS on external/network
@@ -572,7 +577,9 @@ main() {
         avg=$(awk "BEGIN {printf \"%.1f\", $total_thumbs / $global_elapsed}")
         log_ok "Avg speed:         ${BOLD}${avg} frames/sec${NC}"
     fi
-    log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
+    if [[ "$LOG_ENABLED" == true ]]; then
+        log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
+    fi
     echo ""
 
     log_to_file "=== COMPLETE: $total_thumbs thumbnails from $processed videos in ${global_elapsed}s ==="
@@ -585,9 +592,13 @@ while [[ $# -gt 0 ]]; do
             VIDEO_MAX="$2"
             shift 2
             ;;
+        --log)
+            LOG_ENABLED=true
+            shift
+            ;;
         *)
             log_err "Unknown option: $1"
-            echo "Usage: $(basename "$0") [--video-max N]"
+            echo "Usage: $(basename "$0") [--video-max N] [--log]"
             exit 1
             ;;
     esac

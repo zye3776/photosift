@@ -20,6 +20,7 @@ THUMBNAIL_DIR="./thumbnails"
 CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
 CORRECTED_DIR="./corrected"
 LOG_FILE="./set-thumbnail.log"
+LOG_ENABLED=false           # Set to true with --log flag
 VIDEO_MAX=1000              # Default limit from original script (0 = all)
 AUTO_YES=false              # Skip confirmation prompts
 
@@ -41,6 +42,7 @@ log_err()  { log "${RED}✗${NC}  $*"; }
 log_skip() { log "${DIM}⏭${NC}  $*"; }
 
 log_to_file() {
+    [[ "$LOG_ENABLED" == true ]] || return 0
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
@@ -266,7 +268,9 @@ main() {
     mkdir -p "$THUMBNAIL_DIR"
 
     # Initialize log
-    : >> "$LOG_FILE"
+    if [[ "$LOG_ENABLED" == true ]]; then
+        : >> "$LOG_FILE"
+    fi
     log_to_file "--- session start ---"
 
     # Check dependencies — auto-install AtomicParsley via Homebrew
@@ -329,7 +333,9 @@ main() {
     fi
     log_ok "Moved to corrected: ${BOLD}${#PROCESSED_VIDEOS[@]}${NC} video(s)"
     log_ok "Total time:        ${BOLD}$(format_duration $elapsed)${NC}"
-    log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
+    if [[ "$LOG_ENABLED" == true ]]; then
+        log_ok "Log file:          ${DIM}$LOG_FILE${NC}"
+    fi
     echo ""
 
     log_to_file "=== COMPLETE: $processed videos in ${elapsed}s ==="
@@ -352,9 +358,13 @@ while [[ $# -gt 0 ]]; do
             AUTO_YES=true
             shift
             ;;
+        --log)
+            LOG_ENABLED=true
+            shift
+            ;;
         *)
             log_err "Unknown option: $1"
-            echo "Usage: $(basename "$0") [limit] [--video-max N] [-y|--yes]"
+            echo "Usage: $(basename "$0") [limit] [--video-max N] [-y|--yes] [--log]"
             exit 1
             ;;
     esac

@@ -56,4 +56,4 @@ Ensure you have the following installed on your system:
 
 ## 💡 Pro Tips
 - Most scripts support a `--video-max N` flag (e.g., `./generate-thumbnail.sh --video-max 5`) to test the process on a small batch first.
-- Always check the `.log` files if a script fails.
+- Use the `--log` flag on any script to enable file logging for debugging (disabled by default).

@@ -14,6 +14,7 @@ set -euo pipefail
 THUMBNAIL_DIR="./thumbnails"
 CONTACT_SHEET_DIR="./thumbnails/contact-sheets"
 LOG_FILE="./generate-contact-sheet.log"
+LOG_ENABLED=false           # Set to true with --log flag
 PARALLEL_JOBS=4             # Process multiple videos in parallel
 
 # --- Colors & Formatting ----------------------------------------------------
@@ -35,6 +36,7 @@ log_err()  { log "${RED}✗${NC}  $*"; }
 log_skip() { log "${DIM}⏭${NC}  $*"; }
 
 log_to_file() {
+    [[ "$LOG_ENABLED" == true ]] || return 0
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
@@ -99,7 +101,9 @@ main() {
     mkdir -p "$CONTACT_SHEET_DIR"
     
     # Initialize log
-    : >> "$LOG_FILE"
+    if [[ "$LOG_ENABLED" == true ]]; then
+        : >> "$LOG_FILE"
+    fi
     log_to_file "--- session start ---"
 
     # Check dependencies
@@ -163,5 +167,20 @@ main() {
     log_ok "Processing complete. Contact sheets saved in $CONTACT_SHEET_DIR"
     log_to_file "=== COMPLETE: $total groups ==="
 }
+
+# --- Parse CLI flags ---------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --log)
+            LOG_ENABLED=true
+            shift
+            ;;
+        *)
+            log_err "Unknown option: $1"
+            echo "Usage: $(basename "$0") [--log]"
+            exit 1
+            ;;
+    esac
+done
 
 main
