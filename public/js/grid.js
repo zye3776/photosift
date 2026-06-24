@@ -7,6 +7,7 @@ import {
 import {
   getPagedPhotos, getTotalPages, updateSelectionCount,
 } from './ui.js';
+import { renderVideoGrid } from './video-grid.js';
 
 export function renderPagination() {
   const totalPages = getTotalPages();
@@ -48,7 +49,18 @@ export function renderPagination() {
   $pagination.appendChild(btnNext);
 }
 
+// Top-level render entry point shared by both modes. It picks which grid to
+// draw based on state.mode. The pagination control (renderPagination) is shared,
+// so both render paths reuse it. Photo rendering below is unchanged.
 export function renderGrid() {
+  if (state.mode === 'videos') {
+    renderVideoGrid();
+    return;
+  }
+  renderPhotoGrid();
+}
+
+function renderPhotoGrid() {
   const photos = getPagedPhotos();
   $gridContainer.innerHTML = '';
   $photoGrid.style.setProperty('--tile-size', `${state.tileSize}px`);

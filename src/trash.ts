@@ -1,10 +1,55 @@
 import { Effect } from 'effect';
 import { existsSync, mkdirSync, renameSync, readdirSync } from 'node:fs';
-import { dirname, basename, join, parse } from 'node:path';
+import { dirname, basename, join, parse, extname } from 'node:path';
 import { TrashError, FileNotFoundError } from './errors';
+import { VIDEO_EXTENSIONS, CLIPS_FOLDER } from './scanner';
 import type { DeleteResult } from './types';
 
 const DELETED_FOLDER = '_deleted';
+
+// When a video is soft-deleted we also move its preview clips out of the way so
+// they don't linger as orphans. The clips folder is moved to
+// <folder>/_deleted/.clips/<video-stem>/ so a later restore can put it back.
+function moveClipsToDeleted(videoPath: string): void {
+  const ext = extname(videoPath).toLowerCase();
+  if (!VIDEO_EXTENSIONS.has(ext)) return;
+
+  const dir = dirname(videoPath);
+  const { name: stem } = parse(videoPath);
+  const clipDir = join(dir, CLIPS_FOLDER, stem);
+  if (!existsSync(clipDir)) return;
+
+  const deletedClipsParent = join(dir, DELETED_FOLDER, CLIPS_FOLDER);
+  if (!existsSync(deletedClipsParent)) {
+    mkdirSync(deletedClipsParent, { recursive: true });
+  }
+  const dest = join(deletedClipsParent, stem);
+  // If a stale clips folder is already parked in _deleted, remove it first so
+  // the rename does not fail.
+  if (existsSync(dest)) {
+    renameSync(dest, `${dest}.old-${Date.now()}`);
+  }
+  renameSync(clipDir, dest);
+}
+
+// Undo of moveClipsToDeleted: put a video's parked clips folder back in place.
+function restoreClipsFromDeleted(videoPath: string): void {
+  const ext = extname(videoPath).toLowerCase();
+  if (!VIDEO_EXTENSIONS.has(ext)) return;
+
+  const dir = dirname(videoPath);
+  const { name: stem } = parse(videoPath);
+  const parked = join(dir, DELETED_FOLDER, CLIPS_FOLDER, stem);
+  if (!existsSync(parked)) return;
+
+  const clipsParent = join(dir, CLIPS_FOLDER);
+  if (!existsSync(clipsParent)) {
+    mkdirSync(clipsParent, { recursive: true });
+  }
+  const dest = join(clipsParent, stem);
+  if (existsSync(dest)) return; // a live clips folder already exists; leave it
+  renameSync(parked, dest);
+}
 
 function moveToDeleted(filePath: string): Effect.Effect<void, TrashError | FileNotFoundError> {
   return Effect.try({
@@ -22,6 +67,10 @@ function moveToDeleted(filePath: string): Effect.Effect<void, TrashError | FileN
 
       const dest = join(deletedDir, basename(filePath));
       renameSync(filePath, dest);
+
+      // If this was a video, move its preview clips aside too so they don't
+      // orphan. Photos are unaffected (no-op for non-video files).
+      moveClipsToDeleted(filePath);
     },
     catch: (error) => {
       if (error instanceof FileNotFoundError) return error;
@@ -64,6 +113,9 @@ function restoreFromDeleted(originalPath: string): Effect.Effect<void, TrashErro
       }
 
       renameSync(deletedPath, originalPath);
+
+      // If this was a video, put its preview clips back as well.
+      restoreClipsFromDeleted(originalPath);
     },
     catch: (error) => {
       if (error instanceof FileNotFoundError) return error;

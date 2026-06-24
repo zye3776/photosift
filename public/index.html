@@ -16,6 +16,10 @@
         <button id="btn-scan-folder" class="secondary">Scan</button>
       </div>
       <div id="mode-controls" class="hidden">
+        <div id="media-mode-toggle" class="segmented">
+          <button id="btn-mode-photos" type="button" class="seg active">Photos</button>
+          <button id="btn-mode-videos" type="button" class="seg">Videos</button>
+        </div>
         <label class="toggle-label">
           <input type="checkbox" id="toggle-group-mode">
           <span>Group Mode</span>
@@ -58,6 +62,12 @@
   <div id="loading" class="hidden">
     <div class="spinner"></div>
     <span id="loading-text">Loading...</span>
+  </div>
+
+  <!-- Floating message shown while video preview clips are being built -->
+  <div id="progress-overlay" class="hidden">
+    <div class="spinner"></div>
+    <span id="progress-text">Generating previews…</span>
   </div>
 
   <script type="module" src="/public/app.js"></script>

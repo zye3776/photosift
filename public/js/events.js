@@ -1,16 +1,22 @@
 /* PhotoSift — Event Listeners */
 
-import { state, TILE_SIZE_MIN, TILE_SIZE_MAX, TILE_SIZE_STEP, STORAGE_KEY } from './state.js';
+import {
+  state, TILE_SIZE_MIN, TILE_SIZE_MAX, TILE_SIZE_STEP, STORAGE_KEY, MODE_STORAGE_KEY,
+} from './state.js';
 import {
   $btnPickFolder, $folderDisplay, $btnScanFolder, $toggleGroupMode,
   $groupFilter, $groupSizeFilter,
   $btnPrevGroup, $btnNextGroup,
   $btnSelectAll, $btnInvertSelection, $btnDeselectAll, $btnDelete,
   $btnUndo, $photoGrid,
+  $btnModePhotos, $btnModeVideos,
 } from './dom.js';
-import { getVisiblePhotos, updateGroupNav, dismissUndo } from './ui.js';
+import { getVisiblePhotos, updateGroupNav, hideProgressOverlay } from './ui.js';
 import { renderGrid } from './grid.js';
-import { scanFolder, applyGroupFilter, deleteUnselected, undoLastDelete } from './api.js';
+import {
+  scanFolder, applyGroupFilter, deleteUnselected, undoLastDelete,
+  updateModeCount, maybeGenerateClips,
+} from './api.js';
 
 $btnPickFolder.addEventListener('click', async () => {
   $btnPickFolder.disabled = true;
@@ -41,6 +47,49 @@ $btnScanFolder.addEventListener('click', () => {
   }
 });
 
+/* ── Photos / Videos mode toggle ──────────────────
+   Switching mode only re-renders — the single scan already returned both
+   photos and videos, so we never re-scan just to switch. */
+
+function setMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode;
+  localStorage.setItem(MODE_STORAGE_KEY, mode);
+
+  // Leaving video mode: stop any in-flight clip-generation progress stream so we
+  // don't keep a Server-Sent Events connection open (and updating now-hidden
+  // tiles) while the user browses photos.
+  if (mode !== 'videos' && state.videoProgressSource) {
+    state.videoProgressSource.close();
+    state.videoProgressSource = null;
+    hideProgressOverlay();
+  }
+
+  // Reflect which button is active.
+  $btnModePhotos.classList.toggle('active', mode === 'photos');
+  $btnModeVideos.classList.toggle('active', mode === 'videos');
+
+  // Group navigation lists differ between photos and videos, so rebuild them.
+  state.currentGroupIndex = 0;
+  state.currentPage = 0;
+  applyGroupFilter();
+  updateGroupNav();
+  updateModeCount();
+  renderGrid();
+
+  // Entering video mode may need preview clips built for not-ready videos.
+  if (mode === 'videos') {
+    maybeGenerateClips();
+  }
+}
+
+$btnModePhotos.addEventListener('click', () => setMode('photos'));
+$btnModeVideos.addEventListener('click', () => setMode('videos'));
+
+// Reflect the persisted mode on the toggle buttons at startup.
+$btnModePhotos.classList.toggle('active', state.mode === 'photos');
+$btnModeVideos.classList.toggle('active', state.mode === 'videos');
+
 $toggleGroupMode.addEventListener('change', () => {
   state.groupMode = $toggleGroupMode.checked;
   state.currentGroupIndex = 0;
@@ -52,6 +101,8 @@ $toggleGroupMode.addEventListener('change', () => {
     $groupFilter.classList.add('hidden');
   }
 
+  // Rebuild the group list for the current mode before navigating.
+  applyGroupFilter();
   updateGroupNav();
   renderGrid();
 });

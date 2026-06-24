@@ -25,3 +25,9 @@ export const $loading = document.getElementById('loading');
 export const $loadingText = document.getElementById('loading-text');
 export const $undoMessage = document.getElementById('undo-message');
 export const $btnUndo = document.getElementById('btn-undo');
+
+// ── Video preview mode ──────────────────────────
+export const $btnModePhotos = document.getElementById('btn-mode-photos');
+export const $btnModeVideos = document.getElementById('btn-mode-videos');
+export const $progressOverlay = document.getElementById('progress-overlay');
+export const $progressText = document.getElementById('progress-text');
