@@ -6,6 +6,7 @@ import { generateThumbnail } from './thumbnail';
 import { deleteFiles, restoreFiles, restoreGroup } from './trash';
 import { pickFolder } from './folder-picker';
 import { clipEngine, type ClipProgress } from './clips';
+import { incrementOpen } from './stats';
 import type { DeleteRequest } from './types';
 import type { Server } from 'bun';
 
@@ -302,7 +303,9 @@ async function handleApiOpen(request: Request): Promise<Response> {
   }
 
   Bun.spawn(['open', body.file]);
-  return Response.json({ ok: true });
+  // Record the open in the stats file and report the new count back to the UI.
+  const opens = incrementOpen(body.file);
+  return Response.json({ ok: true, opens });
 }
 
 // POST /api/stop-clips

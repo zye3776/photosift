@@ -15,10 +15,9 @@ import {
 } from './errors';
 import {
   VIDEO_EXTENSIONS,
-  expectedClipCount,
+  clipTimestamps,
   CLIP_META_FILE,
   CLIPS_FOLDER,
-  CLIP_INTERVAL_SECS,
 } from './scanner';
 import type { VideoItem } from './types';
 
@@ -26,6 +25,16 @@ import type { VideoItem } from './types';
 // (5 minutes) of the source video, starting at t=0. The clips-folder name and
 // the interval are imported from the scanner so there is one source of truth.
 const CLIP_DURATION_SECS = 1;
+
+// Preview clip quality — kept deliberately low so the grid can play many clips
+// (hundreds) at once without stutter. Clips are shown small, so this is plenty:
+//   CLIP_WIDTH — output width in px (height auto, kept even). Half the old 480.
+//   CLIP_FPS   — capped frame rate; fewer frames means cheaper decoding.
+//   CLIP_CRF   — libx264 quality (higher = lower quality + smaller + easier to
+//                decode). 23 is the ffmpeg default; 30 is much lighter.
+const CLIP_WIDTH = 240;
+const CLIP_FPS = 15;
+const CLIP_CRF = 30;
 
 // How many videos may be processed at the same time. Clips inside one video
 // are always cut one after another; this limit is across different videos.
@@ -126,15 +135,6 @@ export class ClipEngine {
     return { stopped: true };
   }
 
-  // The timestamps (in seconds) at which clips should be cut for a video of
-  // the given length: 0, 300, 600, ... one per expected clip.
-  private clipTimestamps(duration: number): number[] {
-    return Array.from(
-      { length: expectedClipCount(duration) },
-      (_, i) => i * CLIP_INTERVAL_SECS,
-    );
-  }
-
   // Read a video's duration in seconds with ffprobe.
   private probeDuration(
     videoPath: string,
@@ -222,11 +222,15 @@ export class ClipEngine {
           String(CLIP_DURATION_SECS),
           '-an', // drop audio: previews are muted
           '-vf',
-          'scale=480:-2',
+          `scale=${CLIP_WIDTH}:-2`,
+          '-r',
+          String(CLIP_FPS), // cap frame rate so many clips decode cheaply
           '-c:v',
           'libx264',
           '-preset',
           'veryfast',
+          '-crf',
+          String(CLIP_CRF), // lower quality, smaller files, lighter to decode
           '-pix_fmt',
           'yuv420p',
           '-movflags',
@@ -315,7 +319,7 @@ export class ClipEngine {
       // Clear leftovers from any previously interrupted run before cutting.
       yield* _(Effect.sync(() => this.sweepTempClips(clipDir)));
 
-      const timestamps = this.clipTimestamps(duration);
+      const timestamps = clipTimestamps(duration);
       const clipsTotal = timestamps.length;
       onClip(0, clipsTotal); // emits "start" now that clipsTotal is known
 

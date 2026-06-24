@@ -66,6 +66,14 @@ function createVideoTile(video) {
   name.textContent = video.stem;
   tile.appendChild(name);
 
+  // "Opened N times" counter (top-left). Reflects the persisted stats file and
+  // ticks up each time this tile is opened.
+  const opens = document.createElement('div');
+  opens.className = 'video-opens';
+  opens.title = 'Times opened';
+  opens.textContent = `▶ ${video.opens || 0}`;
+  tile.appendChild(opens);
+
   // Small ✕ delete button, shown on hover via CSS.
   const del = document.createElement('button');
   del.className = 'video-delete';
@@ -79,8 +87,15 @@ function createVideoTile(video) {
   });
   tile.appendChild(del);
 
-  // Click anywhere else on the tile opens the original in the default player.
-  tile.addEventListener('click', () => openVideo(video.path));
+  // Click anywhere else on the tile opens the original in the default player and
+  // bumps the open counter (both in memory and the on-screen badge).
+  tile.addEventListener('click', async () => {
+    const res = await openVideo(video.path);
+    if (res && typeof res.opens === 'number') {
+      video.opens = res.opens;
+      opens.textContent = `▶ ${res.opens}`;
+    }
+  });
 
   return tile;
 }

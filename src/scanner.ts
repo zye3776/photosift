@@ -3,6 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, parse, extname } from 'node:path';
 import { FolderNotFoundError, FolderReadError } from './errors';
+import { readStats } from './stats';
 import type { PhotoPair, VideoItem, ScanResult } from './types';
 
 const GROUP_PATTERN = /^(.+)-(\d{2,3})$/;
@@ -25,24 +26,56 @@ export const VIDEO_EXTENSIONS = new Set([
 // Exported so the clip generator and the trash module share one definition.
 export const CLIPS_FOLDER = '.clips';
 
-// A 1-second preview clip is cut every CLIP_INTERVAL_SECS, starting at t=0.
-// Exported so the clip generator uses the same interval the scanner counts by.
+// A 1-second preview clip is cut every CLIP_INTERVAL_SECS within the usable
+// window (see clipTimestamps). Exported so the clip generator uses the same
+// interval the scanner counts by.
 export const CLIP_INTERVAL_SECS = 300;
+
+// Skip windows: don't cut preview clips from the very start or very end of a
+// video, where there's usually a title card / intro or trailing credits.
+const SKIP_START_SECS = 30 * 60; // skip the first 30 minutes
+const SKIP_END_SECS = 10 * 60; // skip the last 10 minutes
+// For videos too short for the window above, fall back to skipping just the
+// first and last 5 minutes instead.
+const SHORT_SKIP_SECS = 5 * 60;
 
 export function extractGroup(stem: string): string {
   const match = GROUP_PATTERN.exec(stem);
   return match ? match[1] : stem;
 }
 
-// Number of preview clips a video should have: one clip at the start of each
-// CLIP_INTERVAL_SECS block (t = 0, 300, 600 …). We use ceil rather than
-// `floor + 1` so a video whose length is an exact multiple of the interval does
-// NOT get a final clip sitting right on its end timestamp. Such a clip would
-// land at t === duration, where ffmpeg produces an empty file; the clip count
-// would then never reach the expected total and the video would needlessly
-// re-generate every time the folder is opened. Even a very short video gets one.
+// Clip start times (seconds) within [start, end], one every CLIP_INTERVAL_SECS.
+function timesInWindow(start: number, end: number): number[] {
+  const times: number[] = [];
+  for (let t = start; t <= end; t += CLIP_INTERVAL_SECS) {
+    times.push(t);
+  }
+  return times;
+}
+
+// The timestamps (in seconds) at which to cut preview clips for a video of the
+// given length, taken every CLIP_INTERVAL_SECS. We try progressively smaller
+// skip windows so every video still gets at least one preview:
+//   1. skip the first 30 min and last 10 min (the normal case),
+//   2. if the video is too short for that, skip just the first and last 5 min,
+//   3. if it's still too short, a single clip near the middle.
+// A clip never lands at or past the end (each window stops early), so ffmpeg
+// always has real footage to cut.
+export function clipTimestamps(duration: number): number[] {
+  const primary = timesInWindow(SKIP_START_SECS, duration - SKIP_END_SECS);
+  if (primary.length > 0) return primary;
+
+  const short = timesInWindow(SHORT_SKIP_SECS, duration - SHORT_SKIP_SECS);
+  if (short.length > 0) return short;
+
+  return [Math.max(0, Math.floor(duration / 2))];
+}
+
+// Number of preview clips a video should have — the count of clip timestamps.
+// Derived from clipTimestamps so the scanner's "is it complete?" check always
+// matches exactly what the generator produces.
 export function expectedClipCount(duration: number): number {
-  return Math.max(1, Math.ceil(duration / CLIP_INTERVAL_SECS));
+  return clipTimestamps(duration).length;
 }
 
 // Generic grouping: bucket any item that has a `group` field by that value.
@@ -188,7 +221,9 @@ export function scanFolder(
     photos.sort((a, b) => a.stem.localeCompare(b.stem));
 
     // Build the video list. We only list files and read each video's already
-    // generated clip folder here — no ffmpeg/ffprobe runs during a scan.
+    // generated clip folder here — no ffmpeg/ffprobe runs during a scan. Open
+    // counts come from the stats file (read once; missing file => all zero).
+    const openCounts = readStats();
     const videos: VideoItem[] = [];
     for (const [stem, path] of videoFiles) {
       const { clips, clipsReady, duration } = readClipsForStem(folderPath, stem);
@@ -199,6 +234,7 @@ export function scanFolder(
         clips,
         clipsReady,
         duration,
+        opens: openCounts[path] || 0,
       });
     }
     videos.sort((a, b) => a.stem.localeCompare(b.stem));

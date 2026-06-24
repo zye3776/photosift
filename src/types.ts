@@ -15,6 +15,7 @@ export interface VideoItem {
   clips: string[]; // absolute paths to that video's clip files, sorted ascending
   clipsReady: boolean; // true when the expected number of clips already exist on disk
   duration: number; // seconds (0 if unknown / not yet probed)
+  opens: number; // how many times this video has been opened (from the stats file)
 }
 
 export interface ScanResult {
