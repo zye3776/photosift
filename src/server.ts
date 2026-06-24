@@ -302,6 +302,15 @@ async function handleApiOpen(request: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+// POST /api/stop-clips
+// Stop the in-progress clip-generation run. Clips already finished are kept, so
+// a later run resumes from where this one left off. Returns whether a run was
+// actually stopped (false if nothing was running).
+function handleApiStopClips(): Response {
+  const { stopped } = clipEngine.stop();
+  return Response.json({ stopped });
+}
+
 const server = Bun.serve({
   port: PORT,
   async fetch(request: Request, server: Server<undefined>): Promise<Response> {
@@ -363,6 +372,10 @@ const server = Bun.serve({
 
     if (path === '/api/clip' && request.method === 'GET') {
       return handleApiClip(request, url);
+    }
+
+    if (path === '/api/stop-clips' && request.method === 'POST') {
+      return handleApiStopClips();
     }
 
     if (path === '/api/open' && request.method === 'POST') {

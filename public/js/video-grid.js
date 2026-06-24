@@ -48,6 +48,18 @@ function createVideoTile(video) {
     tile.appendChild(placeholder);
   }
 
+  // While a video is still being generated, show a thin progress bar across the
+  // full tile width, just above the filename. It fills as that video's clips
+  // finish (driven by updateVideoTileProgress from the progress stream).
+  if (!video.clipsReady) {
+    const progress = document.createElement('div');
+    progress.className = 'video-progress';
+    const bar = document.createElement('div');
+    bar.className = 'video-progress-bar';
+    progress.appendChild(bar);
+    tile.appendChild(progress);
+  }
+
   // Filename label along the bottom, same look as photo tiles.
   const name = document.createElement('div');
   name.className = 'video-name';
@@ -119,6 +131,17 @@ export function renderVideoGrid() {
   // The keep/delete action bar belongs to photo mode only.
   $actionBar.classList.add('hidden');
   renderPagination();
+}
+
+// Update one video tile's progress bar as its clips are generated. Touches only
+// the bar's width, so a generating tile never re-renders (no flicker). Tiles not
+// on the current page are simply skipped.
+export function updateVideoTileProgress(stem, clipsDone, clipsTotal) {
+  const sel = `.video-tile[data-stem="${CSS.escape(stem)}"] .video-progress-bar`;
+  const bar = $gridContainer.querySelector(sel);
+  if (!bar) return;
+  const pct = clipsTotal > 0 ? Math.round((clipsDone / clipsTotal) * 100) : 0;
+  bar.style.width = `${pct}%`;
 }
 
 // Re-render a single video tile in place. Used when background generation

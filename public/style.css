@@ -482,13 +482,36 @@ button.danger:hover {
   bottom: 0;
   left: 0;
   right: 0;
+  height: 20px;
+  box-sizing: border-box;
   padding: 4px 6px;
   background: rgba(0, 0, 0, 0.55);
   font-size: 11px;
+  line-height: 12px;
   color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Per-video generation progress — a thin full-width bar sitting directly above
+   the 20px grey name strip. The track is always visible while a video is still
+   generating (empty = queued); the inner fill grows as its clips finish. */
+.video-tile .video-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 20px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1;
+}
+
+.video-tile .video-progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent-green);
+  transition: width 0.2s ease;
 }
 
 /* Small ✕ delete button — hidden until the tile is hovered. */
@@ -544,4 +567,20 @@ button.danger:hover {
 #progress-text {
   font-size: 13px;
   color: var(--text);
+}
+
+#progress-overlay #btn-stop-generate {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#progress-overlay #btn-stop-generate:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
 }

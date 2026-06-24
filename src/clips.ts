@@ -1,5 +1,12 @@
 import { Effect } from 'effect';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  readdirSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   VideoProbeError,
@@ -24,17 +31,28 @@ const CLIP_DURATION_SECS = 2;
 // are always cut one after another; this limit is across different videos.
 const MAX_PARALLEL_VIDEOS = 10;
 
-// A progress update describing where one video is in the generation run.
-//   stem   — the video whose state changed
-//   done   — how many videos have finished overall (success or failure)
-//   total  — how many videos this run is generating clips for
-//   status — "start" when a video begins, "done" when its clips are ready,
-//            "error" when generation for that video failed
+// A progress update for the clip-generation run.
+//   stem        — the video this event is about ("" for run-level events)
+//   status      — "start"   a video began (clipsDone is 0, clipsTotal known)
+//                 "clip"    one more of that video's clips just finished
+//                 "done"    that video's whole clip set is ready
+//                 "error"   generation for that video failed
+//                 "stopped" the user stopped the whole run (terminal)
+//                 "complete" every video was processed (terminal)
+//   clipsDone   — clips finished so far for this video (for its tile's bar)
+//   clipsTotal  — clips this video needs in total
+//   videosDone  — how many videos have finished overall (success or failure)
+//   videosTotal — how many videos this run is generating clips for
 export interface ClipProgress {
   stem: string;
-  done: number;
-  total: number;
-  status: 'start' | 'done' | 'error';
+  status: 'start' | 'clip' | 'done' | 'error' | 'stopped' | 'complete';
+  clipsDone: number;
+  clipsTotal: number;
+  videosDone: number;
+  videosTotal: number;
+  // On a "done" event, the absolute paths of that video's clips, so the UI can
+  // turn its tile into a live preview immediately without waiting for a rescan.
+  clips?: string[];
 }
 
 type ProgressSubscriber = (event: ClipProgress) => void;
@@ -61,6 +79,14 @@ type ProgressSubscriber = (event: ClipProgress) => void;
 export class ClipEngine {
   private readonly subscribers = new Set<ProgressSubscriber>();
 
+  // The ffmpeg child processes currently cutting clips, so stop() can kill them
+  // right away. `running` guards against starting a second run on top of an
+  // active one; `cancelled` asks the worker loop and any in-flight clip to wind
+  // down (set by stop()).
+  private readonly activeProcs = new Set<ReturnType<typeof Bun.spawn>>();
+  private running = false;
+  private cancelled = false;
+
   // Whether Apple's VideoToolbox GPU decoding is available. Probed once and
   // cached; falls back to plain CPU decoding when it is not.
   private hwaccelChecked = false;
@@ -82,6 +108,22 @@ export class ClipEngine {
         // A broken subscriber must not stop generation or other subscribers.
       }
     }
+  }
+
+  // Stop an in-progress run. Asks the worker loop to stop pulling new work and
+  // kills any ffmpeg processes mid-clip. Clips already finished stay on disk, so
+  // a later run resumes where this one left off. No-op if nothing is running.
+  stop(): { stopped: boolean } {
+    if (!this.running) return { stopped: false };
+    this.cancelled = true;
+    for (const proc of this.activeProcs) {
+      try {
+        proc.kill();
+      } catch {
+        // Already exited; nothing to kill.
+      }
+    }
+    return { stopped: true };
   }
 
   // The timestamps (in seconds) at which clips should be cut for a video of
@@ -194,7 +236,14 @@ export class ClipEngine {
         );
 
         const proc = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
-        const exitCode = await proc.exited;
+        // Track the process so stop() can kill it mid-clip; always untrack it.
+        this.activeProcs.add(proc);
+        let exitCode: number;
+        try {
+          exitCode = await proc.exited;
+        } finally {
+          this.activeProcs.delete(proc);
+        }
         const stderr = await new Response(proc.stderr).text();
         if (exitCode !== 0) {
           // Clean up the partial temp file so it is not left behind.
@@ -211,14 +260,37 @@ export class ClipEngine {
     });
   }
 
-  // Generate all missing clips for one video. Returns the number of clips that
-  // exist when done. Clips are cut in order; an already-present clip file is
-  // left untouched so re-running is cheap.
+  // Remove half-written temp clips (clip-NNN.mp4.tmp-*) left behind by a run
+  // that was killed or stopped mid-clip, so they don't pile up as junk. Never
+  // fails the run — a missing/unreadable folder just means nothing to sweep.
+  private sweepTempClips(clipDir: string): void {
+    try {
+      for (const name of readdirSync(clipDir)) {
+        if (/^clip-\d+\.mp4\.tmp-/.test(name)) {
+          try {
+            rmSync(join(clipDir, name));
+          } catch {
+            // Ignore a single file we couldn't delete.
+          }
+        }
+      }
+    } catch {
+      // Folder doesn't exist yet or can't be read; nothing to sweep.
+    }
+  }
+
+  // Generate all missing clips for one video. Clips are cut in order; an
+  // already-present clip file is left untouched so re-running is cheap.
+  // `onClip(clipsDone, clipsTotal)` is called once with clipsDone=0 when the
+  // clip count is known, then after each clip (whether freshly cut or already
+  // present), so the UI can fill that video's progress bar.
   private generateForVideo(
     folderPath: string,
     video: VideoItem,
-  ): Effect.Effect<void, ClipGenerationError> {
+    onClip: (clipsDone: number, clipsTotal: number) => void,
+  ): Effect.Effect<string[], ClipGenerationError> {
     return Effect.gen(this, function* (_) {
+      const clipPaths: string[] = [];
       const duration = yield* _(
         this.probeDuration(video.path).pipe(
           Effect.mapError(
@@ -240,18 +312,31 @@ export class ClipEngine {
         }),
       );
 
+      // Clear leftovers from any previously interrupted run before cutting.
+      yield* _(Effect.sync(() => this.sweepTempClips(clipDir)));
+
       const timestamps = this.clipTimestamps(duration);
+      const clipsTotal = timestamps.length;
+      onClip(0, clipsTotal); // emits "start" now that clipsTotal is known
+
       for (let i = 0; i < timestamps.length; i++) {
+        // Stop pulling more clips the moment a stop was requested. The video is
+        // left without its meta.json, so it stays "not ready" and resumes later.
+        if (this.cancelled) return clipPaths;
+
         const clipName = `clip-${String(i + 1).padStart(3, '0')}.mp4`;
         const finalPath = join(clipDir, clipName);
-        if (existsSync(finalPath)) continue; // already cut
-        yield* _(
-          this.generateOneClip(video.path, finalPath, timestamps[i]).pipe(
-            Effect.mapError(
-              (e) => new ClipGenerationError(video.path, e.reason),
+        if (!existsSync(finalPath)) {
+          yield* _(
+            this.generateOneClip(video.path, finalPath, timestamps[i]).pipe(
+              Effect.mapError(
+                (e) => new ClipGenerationError(video.path, e.reason),
+              ),
             ),
-          ),
-        );
+          );
+        }
+        clipPaths.push(finalPath);
+        onClip(i + 1, clipsTotal); // emits "clip"
       }
 
       // Record the duration so a later scan can confirm the clip set is
@@ -268,6 +353,8 @@ export class ClipEngine {
             new ClipGenerationError(video.path, String(error)),
         }),
       );
+
+      return clipPaths;
     });
   }
 
@@ -289,12 +376,19 @@ export class ClipEngine {
     folderPath: string,
     videos: VideoItem[],
   ): { started: boolean; total: number } {
+    // Only one run at a time; a second start() while busy is a no-op.
+    if (this.running) {
+      return { started: false, total: 0 };
+    }
+
     const pending = this.videosNeedingWork(videos);
     const total = pending.length;
     if (total === 0) {
       return { started: false, total: 0 };
     }
 
+    this.running = true;
+    this.cancelled = false;
     // Run in the background; do not await here so the HTTP handler can return.
     void this.runPool(folderPath, pending, total);
     return { started: true, total };
@@ -313,20 +407,42 @@ export class ClipEngine {
     let done = 0;
 
     const worker = async (): Promise<void> => {
-      while (nextIndex < pending.length) {
-        const video = pending[nextIndex++];
-        this.emit({ stem: video.stem, done, total, status: 'start' });
+      while (true) {
+        if (this.cancelled) return;
+        const index = nextIndex++;
+        if (index >= pending.length) return;
+        const video = pending[index];
+
+        // Per-clip progress for this video's tile bar. clipsDone === 0 means the
+        // video just started; reads the shared `done` for the run-level counts.
+        const onClip = (clipsDone: number, clipsTotal: number) => {
+          this.emit({
+            stem: video.stem,
+            status: clipsDone === 0 ? 'start' : 'clip',
+            clipsDone,
+            clipsTotal,
+            videosDone: done,
+            videosTotal: total,
+          });
+        };
 
         const result = await Effect.runPromise(
-          Effect.either(this.generateForVideo(folderPath, video)),
+          Effect.either(this.generateForVideo(folderPath, video, onClip)),
         );
+
+        // If a stop landed during this video, don't report done/error for it —
+        // the terminal "stopped" event below covers the run.
+        if (this.cancelled) return;
 
         done++;
         this.emit({
           stem: video.stem,
-          done,
-          total,
           status: result._tag === 'Right' ? 'done' : 'error',
+          clips: result._tag === 'Right' ? result.right : [],
+          clipsDone: 0,
+          clipsTotal: 0,
+          videosDone: done,
+          videosTotal: total,
         });
       }
     };
@@ -337,6 +453,20 @@ export class ClipEngine {
       workers.push(worker());
     }
     await Promise.all(workers);
+
+    // Run finished (either everything processed, or a stop wound it down).
+    const wasCancelled = this.cancelled;
+    this.running = false;
+    this.cancelled = false;
+    this.activeProcs.clear();
+    this.emit({
+      stem: '',
+      status: wasCancelled ? 'stopped' : 'complete',
+      clipsDone: 0,
+      clipsTotal: 0,
+      videosDone: done,
+      videosTotal: total,
+    });
   }
 }
 

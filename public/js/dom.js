@@ -31,3 +31,4 @@ export const $btnModePhotos = document.getElementById('btn-mode-photos');
 export const $btnModeVideos = document.getElementById('btn-mode-videos');
 export const $progressOverlay = document.getElementById('progress-overlay');
 export const $progressText = document.getElementById('progress-text');
+export const $btnStopGenerate = document.getElementById('btn-stop-generate');

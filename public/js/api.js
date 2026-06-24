@@ -10,7 +10,7 @@ import {
   showProgressOverlay, updateProgressOverlay, hideProgressOverlay,
 } from './ui.js';
 import { renderGrid } from './grid.js';
-import { refreshVideoTile } from './video-grid.js';
+import { refreshVideoTile, updateVideoTileProgress } from './video-grid.js';
 
 // Natural, case-insensitive sort by stem so "clip-2" sorts before "clip-10".
 // Shared by the photo and video lists so both order the same way.
@@ -137,10 +137,15 @@ export async function generateClips(folderPath) {
 }
 
 // Open a live stream of clip-generation progress from the backend.
-// The backend pushes one message per video state change over Server-Sent Events
-// (a one-way "server keeps the connection open and sends text" channel). Each
-// message looks like {"stem","done","total","status"} where status is
-// "start" | "done" | "error" and done/total are overall video counts.
+// The backend streams clip-generation progress over Server-Sent Events (a
+// one-way "server keeps the connection open and pushes text" channel). Each
+// message is { stem, status, clipsDone, clipsTotal, videosDone, videosTotal,
+// clips? } where status is one of:
+//   start / clip — move that video's per-tile progress bar
+//   done         — that video's clips are ready (msg.clips holds their paths)
+//   error        — that video failed
+//   stopped      — the user stopped the run (terminal)
+//   complete     — every video was processed (terminal)
 export function subscribeToProgress(total) {
   // Close any previous stream so we never have two running at once.
   if (state.videoProgressSource) {
@@ -153,6 +158,16 @@ export function subscribeToProgress(total) {
   const source = new EventSource('/api/progress');
   state.videoProgressSource = source;
 
+  // End the run: hide the overlay, close the stream, and do one final scan to
+  // sync clip paths / readiness from disk. autoGenerate:false so this refresh
+  // cannot kick off another generation run.
+  const endRun = () => {
+    hideProgressOverlay();
+    source.close();
+    state.videoProgressSource = null;
+    scanFolder(state.currentFolder, undefined, { autoGenerate: false });
+  };
+
   source.onmessage = (event) => {
     let msg;
     try {
@@ -162,35 +177,35 @@ export function subscribeToProgress(total) {
       return;
     }
 
-    const finishedOne = msg.status === 'done' || msg.status === 'error';
+    switch (msg.status) {
+      case 'start':
+      case 'clip':
+        // Move only this video's bar — never re-render the tile (no flicker).
+        updateVideoTileProgress(msg.stem, msg.clipsDone, msg.clipsTotal);
+        break;
 
-    // The overall counter only advances when a video finishes. "start" events
-    // also carry a count, but a sibling worker can read it a moment before its
-    // own increment lands, which would make the bar appear to tick backward — so
-    // we ignore the count on "start".
-    if (finishedOne) {
-      updateProgressOverlay(msg.done, msg.total);
-    }
-
-    // When a single video finishes, mark it ready and re-render just that tile
-    // so its placeholder turns into a live preview without a full reload.
-    if (msg.status === 'done' && msg.stem) {
-      const video = state.videos.find((v) => v.stem === msg.stem);
-      if (video) {
-        video.clipsReady = true;
-        refreshVideoTile(msg.stem);
+      case 'done': {
+        // Mark ready, adopt the fresh clip paths, and flip the tile to a live
+        // preview. The overall counter advances only on done/error, so it can't
+        // tick backward from a sibling worker's "start".
+        const video = state.videos.find((v) => v.stem === msg.stem);
+        if (video) {
+          video.clipsReady = true;
+          if (Array.isArray(msg.clips)) video.clips = msg.clips;
+          refreshVideoTile(msg.stem);
+        }
+        updateProgressOverlay(msg.videosDone, msg.videosTotal);
+        break;
       }
-    }
 
-    // All videos processed — stop listening and hide the overlay. Only a
-    // completion event can end the run (a "start" carrying done === total cannot).
-    if (finishedOne && msg.total > 0 && msg.done >= msg.total) {
-      hideProgressOverlay();
-      source.close();
-      state.videoProgressSource = null;
-      // One final scan to pick up the freshly written clip paths for every tile.
-      // autoGenerate:false so this refresh cannot trigger another generation run.
-      scanFolder(state.currentFolder, undefined, { autoGenerate: false });
+      case 'error':
+        updateProgressOverlay(msg.videosDone, msg.videosTotal);
+        break;
+
+      case 'stopped':
+      case 'complete':
+        endRun();
+        break;
     }
   };
 
@@ -201,6 +216,17 @@ export function subscribeToProgress(total) {
     source.close();
     state.videoProgressSource = null;
   };
+}
+
+// POST /api/stop-clips — ask the backend to halt the current generation run.
+// The backend keeps clips already finished and emits a terminal "stopped" event
+// that closes the overlay; partial videos resume the next time the folder opens.
+export async function stopClips() {
+  try {
+    await fetch('/api/stop-clips', { method: 'POST' });
+  } catch (err) {
+    console.error('Failed to stop generation', err);
+  }
 }
 
 // POST /api/open — open the original video in the macOS default player.

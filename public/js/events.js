@@ -9,13 +9,13 @@ import {
   $btnPrevGroup, $btnNextGroup,
   $btnSelectAll, $btnInvertSelection, $btnDeselectAll, $btnDelete,
   $btnUndo, $photoGrid,
-  $btnModePhotos, $btnModeVideos,
+  $btnModePhotos, $btnModeVideos, $btnStopGenerate,
 } from './dom.js';
 import { getVisiblePhotos, updateGroupNav, hideProgressOverlay } from './ui.js';
 import { renderGrid } from './grid.js';
 import {
   scanFolder, applyGroupFilter, deleteUnselected, undoLastDelete,
-  updateModeCount, maybeGenerateClips,
+  updateModeCount, maybeGenerateClips, stopClips,
 } from './api.js';
 
 $btnPickFolder.addEventListener('click', async () => {
@@ -85,6 +85,9 @@ function setMode(mode) {
 
 $btnModePhotos.addEventListener('click', () => setMode('photos'));
 $btnModeVideos.addEventListener('click', () => setMode('videos'));
+
+// Stop button on the "Generating previews…" overlay halts the current run.
+$btnStopGenerate.addEventListener('click', () => stopClips());
 
 // Reflect the persisted mode on the toggle buttons at startup.
 $btnModePhotos.classList.toggle('active', state.mode === 'photos');
