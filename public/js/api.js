@@ -104,25 +104,50 @@ export function updateModeCount() {
   }
 }
 
-// Tell the backend to build any missing preview clips for the current folder,
-// then listen for progress updates over Server-Sent Events. Safe to call when
-// everything is already generated — it simply does nothing in that case.
+// Tell the backend to build any missing preview clips for the current folder
+// and listen for progress over Server-Sent Events. Safe to call when everything
+// is already generated — it resyncs and does nothing else in that case.
+//
+// We start listening BEFORE asking the backend to generate, and we listen even
+// when a run is already active (e.g. after a Photos/Videos toggle or a page
+// reload mid-generation). Otherwise a run that finishes while we aren't
+// listening would never trigger the final rescan, leaving tiles stuck on the
+// "generating…" placeholder until a manual rescan.
 export async function maybeGenerateClips() {
   const notReady = state.videos.filter((v) => !v.clipsReady);
   if (notReady.length === 0) return;
 
+  // Open the stream first (and wait until it's actually connected) so we don't
+  // miss any events from the run we're about to start or one already in flight.
+  await subscribeToProgress(notReady.length);
+
   try {
     const result = await generateClips(state.currentFolder);
-    if (result && result.started && result.total > 0) {
-      subscribeToProgress(result.total);
+    if (result && !result.running) {
+      // The backend has no active run and nothing left to generate, which means
+      // our view was stale (clips finished while we weren't listening). Drop the
+      // stream and resync from disk so the finished previews replace placeholders.
+      if (state.videoProgressSource) {
+        state.videoProgressSource.close();
+        state.videoProgressSource = null;
+      }
+      hideProgressOverlay();
+      scanFolder(state.currentFolder, undefined, { autoGenerate: false });
     }
   } catch (err) {
     console.error('Failed to start clip generation', err);
+    if (state.videoProgressSource) {
+      state.videoProgressSource.close();
+      state.videoProgressSource = null;
+    }
+    hideProgressOverlay();
   }
 }
 
 // POST /api/generate-clips — asks the backend to start building preview clips.
-// Returns { started, total } where total is how many videos needed work.
+// Returns { started, total, running }: total is how many videos needed work,
+// and running is true when a generation run is active (one we just started, or
+// one that was already in progress) so the caller knows to keep listening.
 export async function generateClips(folderPath) {
   const response = await fetch('/api/generate-clips', {
     method: 'POST',
@@ -216,6 +241,21 @@ export function subscribeToProgress(total) {
     source.close();
     state.videoProgressSource = null;
   };
+
+  // Resolve once the stream is actually connected, so the caller starts
+  // generation only after the backend has registered us as a listener (no
+  // early events are missed). A short fallback resolves anyway if "open" is slow.
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    source.addEventListener('open', finish, { once: true });
+    setTimeout(finish, 400);
+  });
 }
 
 // POST /api/stop-clips — ask the backend to halt the current generation run.

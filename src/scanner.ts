@@ -25,7 +25,7 @@ export const VIDEO_EXTENSIONS = new Set([
 // Exported so the clip generator and the trash module share one definition.
 export const CLIPS_FOLDER = '.clips';
 
-// A 2-second preview clip is cut every CLIP_INTERVAL_SECS, starting at t=0.
+// A 1-second preview clip is cut every CLIP_INTERVAL_SECS, starting at t=0.
 // Exported so the clip generator uses the same interval the scanner counts by.
 export const CLIP_INTERVAL_SECS = 300;
 

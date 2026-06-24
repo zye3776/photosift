@@ -22,10 +22,10 @@ import {
 } from './scanner';
 import type { VideoItem } from './types';
 
-// Each preview clip is 2 seconds long; one is cut every CLIP_INTERVAL_SECS
+// Each preview clip is 1 second long; one is cut every CLIP_INTERVAL_SECS
 // (5 minutes) of the source video, starting at t=0. The clips-folder name and
 // the interval are imported from the scanner so there is one source of truth.
-const CLIP_DURATION_SECS = 2;
+const CLIP_DURATION_SECS = 1;
 
 // How many videos may be processed at the same time. Clips inside one video
 // are always cut one after another; this limit is across different videos.
@@ -63,7 +63,7 @@ type ProgressSubscriber = (event: ClipProgress) => void;
  *
  * For each video it:
  *   1. reads the video length with ffprobe,
- *   2. works out how many 2-second clips are needed (one every 5 minutes),
+ *   2. works out how many 1-second clips are needed (one every 5 minutes),
  *   3. cuts any clips that are missing with ffmpeg, writing to a temp name
  *      first and renaming only after a clip finishes (so a half-written file
  *      is never served),
@@ -197,7 +197,7 @@ export class ClipEngine {
     });
   }
 
-  // Cut a single 2-second clip starting at timestamp `t` from `videoPath`.
+  // Cut a single 1-second clip starting at timestamp `t` from `videoPath`.
   // The clip is written to a temp file first and renamed to its final
   // clip-NNN.mp4 name only after ffmpeg succeeds, so readers never see a
   // partially written file.
@@ -375,23 +375,26 @@ export class ClipEngine {
   start(
     folderPath: string,
     videos: VideoItem[],
-  ): { started: boolean; total: number } {
-    // Only one run at a time; a second start() while busy is a no-op.
+  ): { started: boolean; total: number; running: boolean } {
+    // Only one run at a time; a second start() while busy is a no-op, but report
+    // running:true so the caller knows a run is active and keeps listening to it.
     if (this.running) {
-      return { started: false, total: 0 };
+      return { started: false, total: 0, running: true };
     }
 
     const pending = this.videosNeedingWork(videos);
     const total = pending.length;
     if (total === 0) {
-      return { started: false, total: 0 };
+      // Nothing to do and nothing running — the caller's view may be stale and
+      // should resync from disk rather than wait for events that won't come.
+      return { started: false, total: 0, running: false };
     }
 
     this.running = true;
     this.cancelled = false;
     // Run in the background; do not await here so the HTTP handler can return.
     void this.runPool(folderPath, pending, total);
-    return { started: true, total };
+    return { started: true, total, running: true };
   }
 
   // Worker pool: keep up to MAX_PARALLEL_VIDEOS videos in flight at once,

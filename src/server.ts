@@ -163,8 +163,11 @@ async function handleApiGenerateClips(request: Request): Promise<Response> {
     );
   }
 
-  const { started, total } = clipEngine.start(body.folder, scan.right.videos);
-  return Response.json({ started, total });
+  const { started, total, running } = clipEngine.start(
+    body.folder,
+    scan.right.videos,
+  );
+  return Response.json({ started, total, running });
 }
 
 // GET /api/progress
