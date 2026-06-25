@@ -1,6 +1,6 @@
 /* PhotoSift — UI Helpers */
 
-import { state, PAGE_SIZE } from './state.js';
+import { state } from './state.js';
 import {
   $loading, $loadingText, $undoMessage,
   $selectionCount, $groupNav, $groupInfo,
@@ -58,19 +58,19 @@ export function getVisibleItems() {
 
 export function getPagedPhotos() {
   const visible = getVisiblePhotos();
-  const start = state.currentPage * PAGE_SIZE;
-  return visible.slice(start, start + PAGE_SIZE);
+  const start = state.currentPage * state.pageSize;
+  return visible.slice(start, start + state.pageSize);
 }
 
 // The slice of videos for the current page (same paging rule as photos).
 export function getPagedVideos() {
   const visible = getVisibleVideos();
-  const start = state.currentPage * PAGE_SIZE;
-  return visible.slice(start, start + PAGE_SIZE);
+  const start = state.currentPage * state.pageSize;
+  return visible.slice(start, start + state.pageSize);
 }
 
 export function getTotalPages() {
-  return Math.max(1, Math.ceil(getVisibleItems().length / PAGE_SIZE));
+  return Math.max(1, Math.ceil(getVisibleItems().length / state.pageSize));
 }
 
 export function updateSelectionCount() {

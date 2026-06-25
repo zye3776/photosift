@@ -162,12 +162,12 @@ export async function generateClips(folderPath) {
 }
 
 // Open a live stream of clip-generation progress from the backend.
-// The backend streams clip-generation progress over Server-Sent Events (a
-// one-way "server keeps the connection open and pushes text" channel). Each
-// message is { stem, status, clipsDone, clipsTotal, videosDone, videosTotal,
-// clips? } where status is one of:
+// The backend streams generation progress over Server-Sent Events (a one-way
+// "server keeps the connection open and pushes text" channel). Each message is
+// { stem, status, clipsDone, clipsTotal, videosDone, videosTotal, preview?,
+// poster? } where status is one of:
 //   start / clip — move that video's per-tile progress bar
-//   done         — that video's clips are ready (msg.clips holds their paths)
+//   done         — that video's preview is ready (msg.preview/msg.poster paths)
 //   error        — that video failed
 //   stopped      — the user stopped the run (terminal)
 //   complete     — every video was processed (terminal)
@@ -210,13 +210,14 @@ export function subscribeToProgress(total) {
         break;
 
       case 'done': {
-        // Mark ready, adopt the fresh clip paths, and flip the tile to a live
-        // preview. The overall counter advances only on done/error, so it can't
-        // tick backward from a sibling worker's "start".
+        // Mark ready, adopt the fresh preview/poster paths, and flip the tile to
+        // a live preview. The overall counter advances only on done/error, so it
+        // can't tick backward from a sibling worker's "start".
         const video = state.videos.find((v) => v.stem === msg.stem);
         if (video) {
           video.clipsReady = true;
-          if (Array.isArray(msg.clips)) video.clips = msg.clips;
+          if (msg.preview) video.preview = msg.preview;
+          if (msg.poster) video.poster = msg.poster;
           refreshVideoTile(msg.stem);
         }
         updateProgressOverlay(msg.videosDone, msg.videosTotal);

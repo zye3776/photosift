@@ -17,8 +17,8 @@
       </div>
       <div id="mode-controls" class="hidden">
         <div id="media-mode-toggle" class="segmented">
-          <button id="btn-mode-photos" type="button" class="seg active">Photos</button>
-          <button id="btn-mode-videos" type="button" class="seg">Videos</button>
+          <button id="btn-mode-photos" type="button" class="seg">Photos</button>
+          <button id="btn-mode-videos" type="button" class="seg active">Videos</button>
         </div>
         <label class="toggle-label">
           <input type="checkbox" id="toggle-group-mode">
@@ -28,6 +28,16 @@
           <label>Min photos in group:</label>
           <input type="number" id="group-size-filter" value="6" min="1" style="width: 50px;">
         </div>
+        <label class="page-size-label">
+          <span>Per page:</span>
+          <select id="page-size-select">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+          </select>
+        </label>
         <span id="photo-count"></span>
       </div>
     </div>

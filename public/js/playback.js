@@ -1,8 +1,10 @@
 /* PhotoSift — Video Tile Playback Control
-   Only the video tiles you can actually see should play, to keep things light.
-   This uses an IntersectionObserver (a browser tool that tells you when an
-   element scrolls into or out of view) to .play() tiles that enter the viewport
-   and .pause() tiles that leave it. */
+   Only the video tiles you can actually see should animate, to keep things
+   light. This uses an IntersectionObserver (a browser tool that tells you when
+   an element scrolls into or out of view) to point each tile's <img> at its
+   animated preview when it enters the viewport, and back at its still poster
+   when it leaves. The animated file stays in the browser cache, so a tile that
+   scrolls back into view resumes instantly without re-downloading. */
 
 import { $photoGrid } from './dom.js';
 
@@ -11,23 +13,35 @@ import { $photoGrid } from './dom.js';
 // then observes the new ones — the observer instance itself is never rebuilt.
 let observer = null;
 
+// Point a tile's <img> at its animated preview (when on screen) or its still
+// poster (when off screen). The dataset flag avoids re-setting the same src on
+// every observer callback, which would otherwise restart the download/animation.
+function showPreview(tile) {
+  const img = tile._img;
+  if (!img || !tile._previewUrl || img.dataset.showing === 'preview') return;
+  img.dataset.showing = 'preview';
+  img.src = tile._previewUrl;
+}
+
+function showPoster(tile) {
+  const img = tile._img;
+  if (!img || !tile._posterUrl || img.dataset.showing === 'poster') return;
+  img.dataset.showing = 'poster';
+  img.src = tile._posterUrl;
+}
+
 function ensureObserver() {
   if (observer) return observer;
 
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        // Each watched tile stashes its ClipSequencePlayer (set in video-grid.js).
-        // The player owns the two stacked <video> elements and the clip-cycling.
-        const player = entry.target._clipPlayer;
-        if (!player) continue;
-
+        // Tiles still showing the "generating…" placeholder have no _img yet.
+        if (!entry.target._img) continue;
         if (entry.isIntersecting) {
-          // play() also flags the player as "should keep playing" so it carries
-          // on to the next clip while the tile stays on screen.
-          player.play();
+          showPreview(entry.target);
         } else {
-          player.pause();
+          showPoster(entry.target);
         }
       }
     },

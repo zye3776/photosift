@@ -7,6 +7,7 @@ export const $modeControls = document.getElementById('mode-controls');
 export const $toggleGroupMode = document.getElementById('toggle-group-mode');
 export const $groupFilter = document.getElementById('group-filter');
 export const $groupSizeFilter = document.getElementById('group-size-filter');
+export const $pageSizeSelect = document.getElementById('page-size-select');
 export const $photoCount = document.getElementById('photo-count');
 export const $groupNav = document.getElementById('group-nav');
 export const $btnPrevGroup = document.getElementById('btn-prev-group');

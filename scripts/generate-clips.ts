@@ -2,7 +2,7 @@
 //
 // Standalone preview-clip generator.
 //
-// Scans a folder for videos and builds their short preview clips using the very
+// Scans a folder for videos and builds their looping previews using the very
 // same engine the PhotoSift web app uses (src/clips.ts + src/scanner.ts), then
 // exits. Handy for pre-warming a big folder without opening the browser UI.
 //
@@ -11,11 +11,11 @@
 //
 //   <folder>   the folder containing the video files
 //   --clean    delete the folder's existing .clips/ first, so every video is
-//              regenerated from scratch (e.g. after changing clip settings)
+//              regenerated from scratch (e.g. after changing preview settings)
 //
-// Clips land in <folder>/.clips/<video-stem>/clip-001.mp4 ... and a meta.json is
-// written per video so a later scan knows the set is complete. Up to 10 videos
-// are processed at once; clips within one video are cut in order.
+// Previews land in <folder>/.clips/<video-stem>/preview.webp (+ poster.jpg) and
+// a meta.json is written per video so a later scan knows the preview is
+// complete. Up to 10 videos are processed at once.
 
 import { Effect } from 'effect';
 import { existsSync } from 'node:fs';

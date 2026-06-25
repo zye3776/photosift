@@ -208,26 +208,48 @@ function handleApiProgress(): Response {
   });
 }
 
+// Content types for the preview assets the /api/clip route may serve. The key
+// is the lowercase file extension (no dot).
+const PREVIEW_CONTENT_TYPES: Record<string, string> = {
+  webp: 'image/webp',
+  gif: 'image/gif',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  mp4: 'video/mp4',
+};
+
 // GET /api/clip?file=<abs path>
-// Serve a generated preview clip as video/mp4 with HTTP Range support so the
-// browser can seek and stream. Responds 206 (partial) when the request carries
-// a Range header, otherwise 200 with the whole file.
+// Serve a generated preview asset (the animated webp/gif preview, the still
+// jpg poster, or a legacy mp4 clip). Images are returned whole; mp4 keeps HTTP
+// Range support so the browser can seek and stream (206 on a Range request,
+// otherwise 200 with the whole file).
 async function handleApiClip(request: Request, url: URL): Promise<Response> {
   const file = url.searchParams.get('file');
   if (!file) {
     return Response.json({ error: 'Missing file parameter' }, { status: 400 });
   }
 
-  // Only ever serve generated preview clips. Every clip lives inside a `.clips`
-  // folder and is an .mp4 file, so requiring both blocks path-traversal attempts
-  // such as ?file=../../etc/passwd. resolve() first collapses any `..` segments,
-  // so a crafted path cannot escape the `.clips` check by walking up the tree.
+  // Only ever serve generated preview assets. Every asset lives inside a
+  // `.clips` folder and has one of the allowed extensions, so requiring both
+  // blocks path-traversal attempts such as ?file=../../etc/passwd. resolve()
+  // first collapses any `..` segments, so a crafted path cannot escape the
+  // `.clips` check by walking up the tree.
   const resolved = resolve(file);
-  if (!resolved.includes(`${sep}.clips${sep}`) || !resolved.toLowerCase().endsWith('.mp4')) {
+  const ext = resolved.toLowerCase().split('.').pop() ?? '';
+  const contentType = PREVIEW_CONTENT_TYPES[ext];
+  if (!resolved.includes(`${sep}.clips${sep}`) || !contentType) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
   if (!existsSync(resolved)) {
     return Response.json({ error: 'File not found' }, { status: 404 });
+  }
+
+  // Images: no seeking needed, so serve the whole file in one shot.
+  if (ext !== 'mp4') {
+    return new Response(Bun.file(resolved), {
+      headers: { 'Content-Type': contentType, 'Cache-Control': 'max-age=3600' },
+    });
   }
 
   const bunFile = Bun.file(resolved);

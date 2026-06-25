@@ -438,6 +438,26 @@ button.danger:hover {
   background: var(--accent);
 }
 
+/* ── Page-size dropdown ───────────────────────────── */
+
+.page-size-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.page-size-label select {
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
 /* ── Video tiles ──────────────────────────────────
    Like photo tiles, but the media keeps its natural shape (often 16:9) instead
    of being forced into a square, so wide videos are not cropped oddly. */
@@ -457,31 +477,15 @@ button.danger:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
-/* The clip player stacks two <video> elements in the same spot: one visible and
-   playing, one hidden and pre-loading the next clip. The wrapper reserves the
-   tile's 16:9 box; each video fills it absolutely so they overlap exactly. */
-.clip-player {
-  position: relative;
+/* The preview is a single <img>: a looping animated image while on screen, the
+   still poster while off screen (swapped by the playback observer). It fills the
+   tile's 16:9 box; cover crops wide/tall sources to fit without letterboxing. */
+.video-tile .video-preview {
+  display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #000;
-}
-
-.video-tile video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
   object-fit: cover;
-  display: block;
   background: #000;
-  opacity: 0; /* hidden by default; only the active clip is shown */
-}
-
-/* The clip that's currently playing. Swapping this class between the two
-   elements does the hand-off instantly, with no black reload gap. */
-.video-tile video.is-active {
-  opacity: 1;
 }
 
 .video-placeholder {

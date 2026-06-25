@@ -2,10 +2,11 @@
 
 import {
   state, TILE_SIZE_MIN, TILE_SIZE_MAX, TILE_SIZE_STEP, STORAGE_KEY, MODE_STORAGE_KEY,
+  PAGE_SIZE_STORAGE_KEY,
 } from './state.js';
 import {
   $btnPickFolder, $folderDisplay, $btnScanFolder, $toggleGroupMode,
-  $groupFilter, $groupSizeFilter,
+  $groupFilter, $groupSizeFilter, $pageSizeSelect,
   $btnPrevGroup, $btnNextGroup,
   $btnSelectAll, $btnInvertSelection, $btnDeselectAll, $btnDelete,
   $btnUndo, $photoGrid,
@@ -92,6 +93,24 @@ $btnStopGenerate.addEventListener('click', () => stopClips());
 // Reflect the persisted mode on the toggle buttons at startup.
 $btnModePhotos.classList.toggle('active', state.mode === 'photos');
 $btnModeVideos.classList.toggle('active', state.mode === 'videos');
+
+/* ── Page-size dropdown ───────────────────────────
+   Lets the user choose how many items show per page. Changing it remembers the
+   choice, jumps back to the first page (the old page number may no longer
+   exist), and redraws. */
+
+// Reflect the saved/default page size on the dropdown at startup.
+$pageSizeSelect.value = String(state.pageSize);
+
+$pageSizeSelect.addEventListener('change', () => {
+  const size = parseInt($pageSizeSelect.value, 10);
+  if (!Number.isFinite(size) || size <= 0) return;
+  state.pageSize = size;
+  localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(size));
+  state.currentPage = 0;
+  renderGrid();
+  $photoGrid.scrollTop = 0;
+});
 
 $toggleGroupMode.addEventListener('change', () => {
   state.groupMode = $toggleGroupMode.checked;

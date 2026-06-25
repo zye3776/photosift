@@ -1,9 +1,11 @@
 /* PhotoSift — Video Grid Rendering
-   Draws the video preview mode. Each tile is a muted, looping <video> that
-   cycles through that video's short preview clips. Clicking a tile opens the
-   real video in the Mac's default player; hovering shows a small ✕ that
-   soft-deletes the file (with undo). On-screen tiles play, off-screen ones
-   pause — handled by the IntersectionObserver in playback.js. */
+   Draws the video preview mode. Each tile is a single <img>: a looping animated
+   preview (webp/gif) while the tile is on screen, swapped for a still poster
+   image while it's off screen. That swap (in playback.js, driven by an
+   IntersectionObserver) means only the handful of tiles you can actually see are
+   animating, so the grid stays light even with hundreds of tiles. Clicking a
+   tile opens the real video in the Mac's default player; hovering shows a small
+   ✕ that soft-deletes the file (with undo). */
 
 import { state } from './state.js';
 import {
@@ -13,17 +15,11 @@ import { getPagedVideos } from './ui.js';
 import { renderPagination } from './grid.js';
 import { observeTile, resetPlayback } from './playback.js';
 import { openVideo, deleteVideo } from './api.js';
-import { ClipSequencePlayer } from './clip-player.js';
 
-// Stop every <video> inside `root` from streaming: clear its source and tell the
-// element to abort the in-flight network request. Called before old tiles are
-// discarded so their clips don't keep HTTP connections open after a page flip
-// or a single-tile refresh.
-function releaseVideos(root) {
-  for (const v of root.querySelectorAll('video')) {
-    v.removeAttribute('src');
-    v.load();
-  }
+// Build the URL that serves one preview asset (the animated preview or the still
+// poster) from the backend. Both go through the same /api/clip route.
+function previewUrl(assetPath) {
+  return `/api/clip?file=${encodeURIComponent(assetPath)}`;
 }
 
 // Create a single video tile element for one VideoItem.
@@ -33,14 +29,27 @@ function createVideoTile(video) {
   tile.dataset.stem = video.stem;
   tile.title = video.path;
 
-  if (video.clips && video.clips.length > 0) {
-    // The looping clip player is stashed on the tile so the playback observer
-    // can play/pause it as the tile scrolls in and out of view.
-    const player = new ClipSequencePlayer(video.clips);
-    tile._clipPlayer = player;
-    tile.appendChild(player.root);
+  if (video.preview) {
+    // One <img> per tile. It starts on the still poster; the playback observer
+    // swaps it to the animated preview when the tile scrolls into view and back
+    // to the poster when it leaves. Both URLs are stashed on the tile for that
+    // observer. If there's no separate poster, the preview doubles as the still.
+    const img = document.createElement('img');
+    img.className = 'video-preview';
+    img.alt = video.stem;
+    img.decoding = 'async';
+
+    const animUrl = previewUrl(video.preview);
+    const stillUrl = previewUrl(video.poster || video.preview);
+    img.src = stillUrl;
+    img.dataset.showing = 'poster';
+
+    tile._img = img;
+    tile._previewUrl = animUrl;
+    tile._posterUrl = stillUrl;
+    tile.appendChild(img);
   } else {
-    // No clips on disk yet — show a placeholder until generation finishes.
+    // No preview on disk yet — show a placeholder until generation finishes.
     const placeholder = document.createElement('div');
     placeholder.className = 'video-placeholder';
     placeholder.textContent = 'generating…';
@@ -101,8 +110,7 @@ function createVideoTile(video) {
 
 // Draw the whole video grid for the current page.
 export function renderVideoGrid() {
-  resetPlayback(); // drop observers from the previous render
-  releaseVideos($gridContainer); // stop old clips streaming before we discard them
+  resetPlayback(); // stop watching the previous page's tiles
 
   const videos = getPagedVideos();
   $gridContainer.innerHTML = '';
@@ -144,7 +152,6 @@ export function refreshVideoTile(stem) {
   const video = state.videos.find((v) => v.stem === stem);
   if (!video) return;
   const newTile = createVideoTile(video);
-  releaseVideos(oldTile); // stop the placeholder/old clip before swapping it out
   oldTile.replaceWith(newTile);
   observeTile(newTile);
 }

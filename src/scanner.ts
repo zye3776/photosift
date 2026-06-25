@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { readdir, stat } from 'node:fs/promises';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, parse, extname } from 'node:path';
 import { FolderNotFoundError, FolderReadError } from './errors';
 import { readStats } from './stats';
@@ -21,23 +21,43 @@ export const VIDEO_EXTENSIONS = new Set([
   '.avi',
 ]);
 
-// Folder name that holds generated preview clips, one subfolder per video stem:
-//   <folder>/.clips/<video-stem>/clip-001.mp4, clip-002.mp4, ...
+// Folder name that holds generated previews, one subfolder per video stem:
+//   <folder>/.clips/<video-stem>/preview.webp + poster.jpg + meta.json
 // Exported so the clip generator and the trash module share one definition.
 export const CLIPS_FOLDER = '.clips';
 
-// A 1-second preview clip is cut every CLIP_INTERVAL_SECS within the usable
+// The two preview assets written per video. A single looping animated image
+// (preview) is shown when a tile is on screen; a single still frame (poster) is
+// shown when it is off screen, so off-screen tiles cost nothing to animate.
+//   - preview.webp is the preferred animated format (small, full colour). When
+//     the WebP command-line tools aren't installed we fall back to preview.gif,
+//     so the scanner looks for either.
+//   - poster.jpg is always a plain JPEG (built with ffmpeg alone).
+export const PREVIEW_WEBP_FILE = 'preview.webp';
+export const PREVIEW_GIF_FILE = 'preview.gif';
+export const POSTER_FILE = 'poster.jpg';
+
+// A 1-second motion burst is sampled every CLIP_INTERVAL_SECS within the usable
 // window (see clipTimestamps). Exported so the clip generator uses the same
 // interval the scanner counts by.
 export const CLIP_INTERVAL_SECS = 300;
 
-// Skip windows: don't cut preview clips from the very start or very end of a
-// video, where there's usually a title card / intro or trailing credits.
-const SKIP_START_SECS = 30 * 60; // skip the first 30 minutes
-const SKIP_END_SECS = 10 * 60; // skip the last 10 minutes
-// For videos too short for the window above, fall back to skipping just the
-// first and last 5 minutes instead.
-const SHORT_SKIP_SECS = 5 * 60;
+// How much of the start and end of a video to skip when sampling, so previews
+// avoid title cards / intros and trailing credits. The amount scales with the
+// video's length — a feature-length video has a long intro to skip, a short clip
+// barely any:
+//   - 1 hour or longer:  skip the first 30 min and last 10 min
+//   - 30 min to 1 hour:  skip the first 5 min and last 3 min
+//   - under 30 min:      skip the first 2 min and last 1 min
+// Returns [skipStart, skipEnd] in seconds for the given duration.
+const ONE_HOUR_SECS = 60 * 60;
+const HALF_HOUR_SECS = 30 * 60;
+
+function skipWindow(duration: number): [number, number] {
+  if (duration >= ONE_HOUR_SECS) return [30 * 60, 10 * 60];
+  if (duration >= HALF_HOUR_SECS) return [5 * 60, 3 * 60];
+  return [2 * 60, 1 * 60];
+}
 
 export function extractGroup(stem: string): string {
   const match = GROUP_PATTERN.exec(stem);
@@ -53,29 +73,18 @@ function timesInWindow(start: number, end: number): number[] {
   return times;
 }
 
-// The timestamps (in seconds) at which to cut preview clips for a video of the
-// given length, taken every CLIP_INTERVAL_SECS. We try progressively smaller
-// skip windows so every video still gets at least one preview:
-//   1. skip the first 30 min and last 10 min (the normal case),
-//   2. if the video is too short for that, skip just the first and last 5 min,
-//   3. if it's still too short, a single clip near the middle.
-// A clip never lands at or past the end (each window stops early), so ffmpeg
-// always has real footage to cut.
+// The timestamps (in seconds) at which to sample preview bursts for a video of
+// the given length, taken every CLIP_INTERVAL_SECS within the length-based skip
+// window (see skipWindow). If the video is so short that the window is empty
+// (e.g. only a couple of minutes long), fall back to a single sample near the
+// middle so every video still gets a preview. A sample never lands at or past
+// the end (the window stops early), so ffmpeg always has real footage to cut.
 export function clipTimestamps(duration: number): number[] {
-  const primary = timesInWindow(SKIP_START_SECS, duration - SKIP_END_SECS);
-  if (primary.length > 0) return primary;
-
-  const short = timesInWindow(SHORT_SKIP_SECS, duration - SHORT_SKIP_SECS);
-  if (short.length > 0) return short;
+  const [skipStart, skipEnd] = skipWindow(duration);
+  const times = timesInWindow(skipStart, duration - skipEnd);
+  if (times.length > 0) return times;
 
   return [Math.max(0, Math.floor(duration / 2))];
-}
-
-// Number of preview clips a video should have — the count of clip timestamps.
-// Derived from clipTimestamps so the scanner's "is it complete?" check always
-// matches exactly what the generator produces.
-export function expectedClipCount(duration: number): number {
-  return clipTimestamps(duration).length;
 }
 
 // Generic grouping: bucket any item that has a `group` field by that value.
@@ -102,50 +111,52 @@ function buildGroups(photos: PhotoPair[]): Record<string, PhotoPair[]> {
 // many clips that video should have — without re-running ffprobe at scan time.
 export const CLIP_META_FILE = 'meta.json';
 
-// Read a single video's clip folder and report which clip files exist, plus
-// whether the full set of expected clips is already present.
+// Read a single video's preview folder and report the preview/poster paths that
+// exist, plus whether the preview is fully built.
 //
-// We never run ffprobe during a scan (scans must stay fast), so we cannot
-// compute the expected clip count from the live video. Instead the generator
-// writes a meta.json holding the duration it measured. When that file is
-// present we compare the number of clip-*.mp4 files against the expected count
-// for that duration. Without meta.json we cannot be sure the set is complete,
-// so we report not-ready (the generator will fill it in).
+// Scans must stay fast, so we never run ffprobe here. The generator writes a
+// meta.json (holding the duration it measured) only AFTER the animated preview
+// is finished, so the presence of BOTH the preview file and meta.json means the
+// preview is complete. Without them we report not-ready and the generator fills
+// it in. The preview may be a .webp (preferred) or a .gif fallback.
 function readClipsForStem(
   folderPath: string,
   stem: string,
-): { clips: string[]; clipsReady: boolean; duration: number } {
+): { preview: string; poster: string; clipsReady: boolean; duration: number } {
   const clipDir = join(folderPath, CLIPS_FOLDER, stem);
-  if (!existsSync(clipDir)) {
-    return { clips: [], clipsReady: false, duration: 0 };
-  }
-  let names: string[];
-  try {
-    names = readdirSync(clipDir);
-  } catch {
-    return { clips: [], clipsReady: false, duration: 0 };
-  }
-  const clips = names
-    .filter((n) => /^clip-\d+\.mp4$/i.test(n))
-    .sort((a, b) => a.localeCompare(b))
-    .map((n) => join(clipDir, n));
+  const empty = { preview: '', poster: '', clipsReady: false, duration: 0 };
+  if (!existsSync(clipDir)) return empty;
+
+  const webpPath = join(clipDir, PREVIEW_WEBP_FILE);
+  const gifPath = join(clipDir, PREVIEW_GIF_FILE);
+  const preview = existsSync(webpPath)
+    ? webpPath
+    : existsSync(gifPath)
+      ? gifPath
+      : '';
+
+  const posterPath = join(clipDir, POSTER_FILE);
+  const poster = existsSync(posterPath) ? posterPath : '';
 
   let duration = 0;
-  let clipsReady = false;
   const metaPath = join(clipDir, CLIP_META_FILE);
-  if (existsSync(metaPath)) {
+  const hasMeta = existsSync(metaPath);
+  if (hasMeta) {
     try {
       const meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as {
         duration?: number;
       };
       duration = typeof meta.duration === 'number' ? meta.duration : 0;
-      clipsReady = clips.length >= expectedClipCount(duration);
     } catch {
-      clipsReady = false;
+      // Unreadable meta.json — treat as no duration; readiness handled below.
     }
   }
 
-  return { clips, clipsReady, duration };
+  // Ready only when the animated preview exists and meta.json confirms the run
+  // finished (meta is written last). Poster is best-effort; the UI falls back to
+  // the preview as its still frame when a poster is missing.
+  const clipsReady = preview !== '' && hasMeta;
+  return { preview, poster, clipsReady, duration };
 }
 
 type ScanError = FolderNotFoundError | FolderReadError;
@@ -226,12 +237,16 @@ export function scanFolder(
     const openCounts = readStats();
     const videos: VideoItem[] = [];
     for (const [stem, path] of videoFiles) {
-      const { clips, clipsReady, duration } = readClipsForStem(folderPath, stem);
+      const { preview, poster, clipsReady, duration } = readClipsForStem(
+        folderPath,
+        stem,
+      );
       videos.push({
         stem,
         path,
         group: extractGroup(stem),
-        clips,
+        preview,
+        poster,
         clipsReady,
         duration,
         opens: openCounts[path] || 0,
