@@ -13,6 +13,24 @@ import type { Server } from 'bun';
 const PORT = parseInt(Bun.env.PORT || '3000');
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
 
+// Canonical lowercase-file-extension (no dot) → MIME type map, shared by the
+// static file server and the preview-asset route so the two never disagree
+// about what, say, `jpg` should be. Anything not listed falls back to
+// application/octet-stream at the call site.
+const MIME_TYPES: Record<string, string> = {
+  html: 'text/html',
+  css: 'text/css',
+  js: 'application/javascript',
+  json: 'application/json',
+  svg: 'image/svg+xml',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  mp4: 'video/mp4',
+};
+
 function serveStatic(filePath: string): Response {
   const fullPath = join(PUBLIC_DIR, filePath);
   if (!existsSync(fullPath)) {
@@ -21,18 +39,9 @@ function serveStatic(filePath: string): Response {
 
   const content = readFileSync(fullPath);
   const ext = filePath.split('.').pop() ?? '';
-  const contentTypes: Record<string, string> = {
-    html: 'text/html',
-    css: 'text/css',
-    js: 'application/javascript',
-    json: 'application/json',
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    svg: 'image/svg+xml',
-  };
 
   return new Response(content, {
-    headers: { 'Content-Type': contentTypes[ext] ?? 'application/octet-stream' },
+    headers: { 'Content-Type': MIME_TYPES[ext] ?? 'application/octet-stream' },
   });
 }
 
@@ -208,16 +217,11 @@ function handleApiProgress(): Response {
   });
 }
 
-// Content types for the preview assets the /api/clip route may serve. The key
-// is the lowercase file extension (no dot).
-const PREVIEW_CONTENT_TYPES: Record<string, string> = {
-  webp: 'image/webp',
-  gif: 'image/gif',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  mp4: 'video/mp4',
-};
+// The only file extensions the /api/clip route is allowed to serve: the
+// generated preview/poster assets plus legacy mp4 clips. Kept as its own
+// allow-list (rather than reusing MIME_TYPES directly) so this route can never
+// be tricked into serving arbitrary types such as html or js.
+const PREVIEW_EXTENSIONS = new Set(['webp', 'gif', 'jpg', 'jpeg', 'png', 'mp4']);
 
 // GET /api/clip?file=<abs path>
 // Serve a generated preview asset (the animated webp/gif preview, the still
@@ -237,10 +241,10 @@ async function handleApiClip(request: Request, url: URL): Promise<Response> {
   // `.clips` check by walking up the tree.
   const resolved = resolve(file);
   const ext = resolved.toLowerCase().split('.').pop() ?? '';
-  const contentType = PREVIEW_CONTENT_TYPES[ext];
-  if (!resolved.includes(`${sep}.clips${sep}`) || !contentType) {
+  if (!resolved.includes(`${sep}.clips${sep}`) || !PREVIEW_EXTENSIONS.has(ext)) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
+  const contentType = MIME_TYPES[ext] ?? 'application/octet-stream';
   if (!existsSync(resolved)) {
     return Response.json({ error: 'File not found' }, { status: 404 });
   }

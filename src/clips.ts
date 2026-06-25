@@ -492,14 +492,29 @@ export class ClipEngine {
       const timestamps = pickPreviewPoints(clipTimestamps(duration));
       onStep(0, 2); // emits "start" now that the work is known
 
-      // 1. Poster — the still frame shown when the tile is off screen.
+      // 1. Poster — the still frame shown when a tile is off screen. This is
+      // best-effort: if ffmpeg cannot grab the frame, we log a warning and carry
+      // on with an empty poster path, and the UI falls back to the animated
+      // preview as the still. A poster failure must NOT abort the run, otherwise
+      // a video whose first frame is unreadable would be marked not-ready (its
+      // meta.json is written last, below) and re-generated on every scan forever.
       const posterPath = join(clipDir, POSTER_FILE);
-      yield* _(
+      const poster = yield* _(
         Effect.tryPromise({
           try: () => this.generatePoster(video.path, posterPath, timestamps[0]),
           catch: (error) =>
             new ClipGenerationError(video.path, String(error)),
-        }),
+        }).pipe(
+          Effect.as(posterPath),
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              console.warn(
+                `[clips] poster failed for ${video.stem}: ${error.reason}`,
+              );
+              return '';
+            }),
+          ),
+        ),
       );
       onStep(1, 2);
 
@@ -539,7 +554,7 @@ export class ClipEngine {
         }),
       );
 
-      return { preview: previewPath, poster: posterPath };
+      return { preview: previewPath, poster };
     });
   }
 
