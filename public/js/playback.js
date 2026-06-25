@@ -17,18 +17,17 @@ function ensureObserver() {
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        // Each watched tile holds its <video> as the first child.
-        const videoEl = entry.target.querySelector('video');
-        if (!videoEl) continue;
+        // Each watched tile stashes its ClipSequencePlayer (set in video-grid.js).
+        // The player owns the two stacked <video> elements and the clip-cycling.
+        const player = entry.target._clipPlayer;
+        if (!player) continue;
 
         if (entry.isIntersecting) {
-          // Mark it as "should be playing" so the ended->next-clip handler in
-          // video-grid.js keeps the sequence going while on screen.
-          videoEl.dataset.shouldPlay = 'true';
-          videoEl.play().catch(() => {});
+          // play() also flags the player as "should keep playing" so it carries
+          // on to the next clip while the tile stays on screen.
+          player.play();
         } else {
-          videoEl.dataset.shouldPlay = 'false';
-          videoEl.pause();
+          player.pause();
         }
       }
     },

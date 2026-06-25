@@ -13,12 +13,7 @@ import { getPagedVideos } from './ui.js';
 import { renderPagination } from './grid.js';
 import { observeTile, resetPlayback } from './playback.js';
 import { openVideo, deleteVideo } from './api.js';
-
-// Build the URL that streams one preview clip from the backend. The backend
-// serves it as video/mp4 with HTTP Range support so seeking/looping is smooth.
-function clipUrl(clipPath) {
-  return `/api/clip?file=${encodeURIComponent(clipPath)}`;
-}
+import { ClipSequencePlayer } from './clip-player.js';
 
 // Stop every <video> inside `root` from streaming: clear its source and tell the
 // element to abort the in-flight network request. Called before old tiles are
@@ -39,7 +34,11 @@ function createVideoTile(video) {
   tile.title = video.path;
 
   if (video.clips && video.clips.length > 0) {
-    tile.appendChild(buildPlayer(video));
+    // The looping clip player is stashed on the tile so the playback observer
+    // can play/pause it as the tile scrolls in and out of view.
+    const player = new ClipSequencePlayer(video.clips);
+    tile._clipPlayer = player;
+    tile.appendChild(player.root);
   } else {
     // No clips on disk yet — show a placeholder until generation finishes.
     const placeholder = document.createElement('div');
@@ -98,32 +97,6 @@ function createVideoTile(video) {
   });
 
   return tile;
-}
-
-// Build the <video> element that loops through a video's clip sequence.
-// It starts on clips[0]; when one clip ends we advance to the next and wrap
-// back to the first — so the whole SEQUENCE loops, not just one file.
-function buildPlayer(video) {
-  const el = document.createElement('video');
-  el.muted = true;
-  el.playsInline = true;
-  el.preload = 'metadata';
-  el.loop = false; // we loop the sequence ourselves, not a single clip
-
-  let index = 0;
-  el.src = clipUrl(video.clips[0]);
-
-  el.addEventListener('ended', () => {
-    index = (index + 1) % video.clips.length;
-    el.src = clipUrl(video.clips[index]);
-    // Only keep playing if this tile is currently meant to be playing
-    // (the IntersectionObserver pauses off-screen tiles).
-    if (el.dataset.shouldPlay === 'true') {
-      el.play().catch(() => {});
-    }
-  });
-
-  return el;
 }
 
 // Draw the whole video grid for the current page.
